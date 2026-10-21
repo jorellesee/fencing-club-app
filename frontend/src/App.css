@@ -1,0 +1,62 @@
+body {
+  margin: 0;
+  font-family: system-ui, sans-serif;
+}
+
+.layout {
+  display: flex;
+  height: 100vh;
+}
+
+.calendar {
+  flex: 1;
+  min-width: 0;
+  padding: 16px;
+}
+
+.error {
+  color: #b00020;
+}
+
+.panel {
+  width: 320px;
+  padding: 16px;
+  border-left: 1px solid #ddd;
+  overflow-y: auto;
+}
+
+.panel .close {
+  float: right;
+}
+
+.panel .meta {
+  color: #666;
+}
+
+.attendance {
+  padding: 0;
+  list-style: none;
+}
+
+.attendance li {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.attendance li span {
+  flex: 1;
+}
+
+.danger {
+  display: block;
+  margin-top: 24px;
+  color: #b00020;
+}
+
+.repeat {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}

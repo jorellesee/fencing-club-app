@@ -65,8 +65,9 @@ As a manager, I can:
 2. **Add a class.** Click an empty slot to create a class at that time, and fill in its name, coach, and capacity
 3. **Reschedule a class.** Drag a class to a new day or time, or resize it, and the change saves
 4. **Edit or delete a class.** Change a class's details from the side panel, or delete it
-5. **Take attendance.** Select a class and mark each member present or absent from a searchable member list
-6. **Manage members.** Add, edit, and deactivate members from a simple members list
+5. **Recurring events.** Set classes to recur on a weekly or custom basis
+6. **Take attendance.** Select a class and mark each member present or absent from a searchable member list
+7. **Manage members.** Add, edit, and deactivate members from a simple members list
 
 ## Open questions
 
