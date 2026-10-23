@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 import { api } from './api'
 import { WEAPONS, attendanceRate, formatDate } from './format'
+import MemberForm from './MemberForm'
 
 export function RateBar({ rate }) {
   if (rate === null) return <span className="muted">No classes yet</span>
@@ -18,16 +19,26 @@ export function RateBar({ rate }) {
 export default function MembersPage() {
   const [members, setMembers] = useState(null)
   const [error, setError] = useState('')
+  const [creating, setCreating] = useState(false)
 
   useEffect(() => {
     api('members/').then(setMembers).catch((err) => setError(err.message))
   }, [])
+
+  async function memberCreated() {
+    setCreating(false)
+    setMembers(await api('members/'))
+  }
 
   return (
     <div className="page">
       <h1 className="page-title">
         <span className="page-icon">👥</span>Members
       </h1>
+      <div className="toolbar">
+        <span />
+        <button className="button primary" onClick={() => setCreating(true)}>+ New member</button>
+      </div>
       {error && <p className="error">{error}</p>}
       {members && (
         <table className="table database">
@@ -63,7 +74,8 @@ export default function MembersPage() {
           </tbody>
         </table>
       )}
-      {members?.length === 0 && <p className="empty">No members yet. Add them in the admin.</p>}
+      {members?.length === 0 && <p className="empty">No members yet. Click New member to add one.</p>}
+      {creating && <MemberForm onSaved={memberCreated} onClose={() => setCreating(false)} />}
     </div>
   )
 }

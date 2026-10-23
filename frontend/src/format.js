@@ -15,3 +15,16 @@ export function attendanceRate(member) {
   if (!member.marked_count) return null
   return Math.round((100 * member.present_count) / member.marked_count)
 }
+
+// Values for <input type="date"> and <input type="time">, in local time.
+function pad(n) {
+  return String(n).padStart(2, '0')
+}
+
+export function toDateInput(date) {
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+}
+
+export function toTimeInput(date) {
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}`
+}

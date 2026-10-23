@@ -13,6 +13,8 @@ How to build the manager-only fencing club app: a Django backend with a REST API
 | [7. Recurring classes](#lesson-7-recurring-classes) | Weekly repeats with copied rosters | `@action`, transactions, `bulk_create` |
 | [10. Logins and roles](#lesson-10-logins-for-managers-coaches-and-members) | Coach and member logins with their own views | `OneToOneField`, DRF permissions, sessions, React context |
 | [11. Calendar and table views](#lesson-11-a-calendar-and-a-table-for-every-role) | Two views per role, and class locations | Shared query helpers, lifting state up |
+| [12. Creating in the app](#lesson-12-creating-classes-and-members-in-the-app) | New class and New member forms | Controlled forms, dates and time zones, server-side validation |
+| [13. Going online](#lesson-13-putting-it-online-with-render) | The app on Render with a persistent disk | Environment variables, gunicorn, WhiteNoise, serving React from Django |
 
 Versions used: Python 3.10, Django 5.2, Django REST Framework 3.18, Node 24+, React 19, FullCalendar 7.
 
@@ -2243,6 +2245,178 @@ The classes API returns counts, not one person's status. So the member's table m
 
 ---
 
+# Lesson 12: Creating classes and members in the app
+
+**Goal:** managers stop needing the Django admin for day-to-day work. A **New class** form replaces the old `window.prompt`, and a **New member** form goes on the Members page. Claude built this one; read through the files below to learn from it.
+
+## What was added
+
+| Where | What |
+| --- | --- |
+| `club/tests.py` | Creating a class with every detail, creating a member, a member needs a name, coaches can't create members (51 tests) |
+| `api.js` | Failed requests now carry the parsed JSON body as `error.data` |
+| `Modal.jsx` | A centred dialog. Closes on Escape, on *Cancel*, or a click outside |
+| `FormErrors.jsx` | Shows the API's validation errors field by field |
+| `ClassForm.jsx` | Name, date, start and end time, coach, location, capacity, notes |
+| `MemberForm.jsx` | Name, email, phone, weapon, active |
+| `CalendarPage.jsx`, `ClassesTablePage.jsx` | A **+ New class** button. On the calendar, dragging across empty time opens the form with those times filled in. After saving, the new class's side panel opens so you can add members straight away |
+| `MembersPage.jsx` | A **+ New member** button |
+
+No backend code changed: `ModelViewSet` has always accepted `POST`, and Lesson 10's permissions already limit it to managers.
+
+## Key ideas
+
+### Controlled forms
+
+Each input's value comes from one `form` state object, and every keystroke updates it:
+
+```js
+const [form, setForm] = useState({ name: '', email: '', ... })
+
+function set(key) {
+  return (event) => setForm({ ...form, [key]: event.target.value })
+}
+
+<input value={form.name} onChange={set('name')} />
+```
+
+`set('name')` returns a change handler for that one field. `{ ...form, [key]: value }` copies the object with one field replaced, because React state should be replaced, not changed in place.
+
+### Dates, times and time zones
+
+The form shows a separate date and start/end times, because that's how people think about classes. On submit they're joined and converted:
+
+```js
+new Date(`${form.date}T${form.startTime}`).toISOString()
+```
+
+`new Date('2026-10-27T18:00')` is read as **local** time (Singapore), and `toISOString()` turns it into UTC for Django. Going the other way, `toDateInput` and `toTimeInput` in `format.js` build the input values from local time. Using `toISOString().slice(...)` there would show the UTC date, which is the previous day for early-morning classes.
+
+### Letting the server validate
+
+The form only does basic browser checks (`required`, `type="email"`, `min="1"`). The real rules, such as "end must be after start" or a valid weapon choice, live in the serializer. When one fails, DRF replies **400** with JSON like:
+
+```json
+{ "end": ["End must be after start."] }
+```
+
+`api.js` attaches that to the error, and `FormErrors` shows each field's message. One set of rules, in one place, also applies to anything else that uses the API.
+
+### Why the test sends JSON
+
+`test_creating_a_member` uses `format='json'`. Sent as form data instead, a missing `active` would mean **False**: in an HTML form an unticked checkbox sends nothing, so DRF treats "missing" as unticked. React sends JSON, where a missing field falls back to the model's default (`True`). The test sends what the app actually sends.
+
+### `<datalist>`
+
+The coach and location fields are free text, but `<input list="coach-options">` plus a `<datalist>` suggests names already in use. That cuts down on near-duplicates like "Coach Lim" and "Coach  Lim", which matter because coaches are matched by name.
+
+## Try it
+
+1. As a manager, open **Calendar** and click **+ New class**. It suggests the next full hour. Fill it in and create it: the side panel opens on the new class. Add a member.
+2. Drag across an empty slot. The form opens with those times.
+3. Set the end time before the start. The form shows *"end: End must be after start."*
+4. Open **All classes** and create one from there.
+5. Open **Members**, click **+ New member**, and add someone. They appear in the table.
+
+---
+
+# Lesson 13: Putting it online with Render
+
+**Goal:** run the app on the internet. One Render **web service** runs Django, which also serves the built React app, and a **persistent disk** keeps the SQLite database between deploys. Claude made the code changes; you do the Render setup.
+
+## What was added
+
+| Where | What |
+| --- | --- |
+| `requirements.txt` | `gunicorn` (a production web server) and `whitenoise` (serves static files from Django) |
+| `config/settings.py` | Debug, secret key, allowed hosts and database path now come from environment variables. Local development needs none of them |
+| `config/urls.py` | `react_app`: every URL that isn't `/api/`, `/admin/` or `/static/` returns React's `index.html` |
+| `.gitignore` | `staticfiles/`, the output of `collectstatic` |
+
+## Key ideas
+
+### One codebase, two environments
+
+Settings read **environment variables**, values set outside the code:
+
+```python
+DEBUG = os.environ.get('DJANGO_DEBUG', 'true').lower() == 'true'
+```
+
+On your Mac none are set, so you get the development defaults. On Render you set `DJANGO_DEBUG=false` and a real secret key. When debug is off and `DJANGO_SECRET_KEY` is missing, `os.environ['DJANGO_SECRET_KEY']` crashes on purpose. Starting with a key that's published in git would let anyone forge login cookies.
+
+### Why development and production serve React differently
+
+| | Development | Production |
+| --- | --- | --- |
+| React | Vite dev server on :5173, reloading as you edit | `npm run build` writes plain files to `frontend/dist/` |
+| Django | `runserver` on :8000 | `gunicorn`, on Render's `$PORT` |
+| Same address via | Vite's proxy sends `/api` to Django | Django serves the React files itself |
+
+Either way the browser sees **one address**, so the session cookie and CSRF token work with no extra setup.
+
+- **WhiteNoise** serves `frontend/dist/assets/...` (via `WHITENOISE_ROOT`) and the admin's CSS (via `collectstatic` into `staticfiles/`).
+- **The catch-all route** returns `index.html` for `/table`, `/members/3` and so on. Without it, reloading any page except `/` gives Django's 404, because only React Router knows those URLs.
+
+### Why `migrate` runs at start, not at build
+
+Render builds your app on a separate machine, without the disk attached. The disk, and so the database, only exists once the service starts. So the build command makes files (`npm run build`, `collectstatic`), and the start command runs `migrate` before starting gunicorn.
+
+### HTTPS settings
+
+Render handles HTTPS and passes requests to gunicorn as plain HTTP, with an `X-Forwarded-Proto: https` header. `SECURE_PROXY_SSL_HEADER` tells Django to trust that header. `SESSION_COOKIE_SECURE` and `CSRF_COOKIE_SECURE` stop the browser from ever sending those cookies over plain HTTP.
+
+## Set it up on Render
+
+1. Push your work to GitHub.
+2. In Render: **New → Web Service**, connect the `fencing-club-app` repo. Pick a **paid instance type**, because disks need one.
+
+    | Field | Value |
+    | --- | --- |
+    | Language | Python 3 |
+    | Root Directory | *(leave blank)* |
+    | Build Command | `pip install -r backend/requirements.txt && cd frontend && npm ci && npm run build && cd ../backend && python manage.py collectstatic --noinput` |
+    | Start Command | `cd backend && python manage.py migrate && gunicorn config.wsgi:application --bind 0.0.0.0:$PORT` |
+
+3. **Environment variables:**
+
+    | Key | Value |
+    | --- | --- |
+    | `DJANGO_DEBUG` | `false` |
+    | `DJANGO_SECRET_KEY` | A long random string (Render's **Generate** button, or the command below) |
+    | `SQLITE_PATH` | `/var/data/db.sqlite3` |
+    | `PYTHON_VERSION` | `3.12.10` |
+    | `NODE_VERSION` | `24` |
+
+    To make a key yourself: `python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"`
+
+4. **Advanced → Add Disk:** mount path `/var/data`, 1 GB is plenty.
+5. Create the service and watch the logs. When it's live, open its **Shell** tab and run `cd backend && python manage.py createsuperuser`.
+6. Open `https://<your-service>.onrender.com`, log in, and add members, classes and logins as before.
+
+You don't set `RENDER_EXTERNAL_HOSTNAME`: Render provides it, and the settings add it to `ALLOWED_HOSTS` and `CSRF_TRUSTED_ORIGINS`.
+
+## Rehearse it locally
+
+You can run the production setup on your Mac before deploying:
+
+```bash
+cd frontend && npm run build && cd ../backend
+export DJANGO_DEBUG=false DJANGO_SECRET_KEY=any-long-test-string RENDER_EXTERNAL_HOSTNAME=localhost
+python manage.py collectstatic --noinput
+gunicorn config.wsgi:application --bind 0.0.0.0:8123
+```
+
+Open http://localhost:8123. Pages and the admin should load. Logging in won't work, because secure cookies need HTTPS. Afterwards, close that terminal (or `unset` the variables), and delete `frontend/dist` and `backend/staticfiles`.
+
+## Limits
+
+- **Backups are up to you.** Render keeps the disk, but download a copy of `db.sqlite3` now and then (for example with `scp` or from the Shell).
+- **Deploys cause a short outage.** A service with a disk can't run two copies at once, so the old one stops before the new one starts.
+- **No email yet**, so there's no "forgot password". A manager resets passwords in the admin.
+
+---
+
 # Check your understanding: questions and answers
 
 <details>
@@ -2345,6 +2519,26 @@ The classes API returns counts, not one person's status. So the member's table m
 
 </details>
 
+<details>
+<summary><b>Lesson 12</b></summary>
+
+1. **Why didn't the backend need changing?** `ModelViewSet` already handles `POST` (create), and `RoleAccess` already allows it for managers only.
+2. **Why `{ ...form, [key]: value }` rather than `form[key] = value`?** React only re-renders when state is replaced with a new object. Changing the old one in place wouldn't update the screen.
+3. **What would `toISOString().slice(0, 10)` get wrong as the date input's value?** It gives the UTC date. For a Singapore class before 8am, that's the previous day.
+4. **Where does "end must be after start" get checked?** In `FencingClassSerializer.validate`. React just shows the message it sends back.
+
+</details>
+
+<details>
+<summary><b>Lesson 13</b></summary>
+
+1. **Why does the app crash if `DJANGO_SECRET_KEY` is missing online?** The fallback key is in git. Running with it would let anyone forge session cookies, so failing loudly is safer.
+2. **Why does reloading `/table` need the catch-all route?** Django has no `/table` URL. Only React Router knows it, so Django has to send `index.html` and let React pick the page.
+3. **Why is `migrate` in the start command?** The disk holding the database isn't attached during the build, only while the service runs.
+4. **What happens without the persistent disk?** Each deploy starts from fresh files, so `db.sqlite3` and all your data would be wiped.
+
+</details>
+
 ---
 
 # What's next
@@ -2352,6 +2546,5 @@ The classes API returns counts, not one person's status. So the member's table m
 - **A `Coach` model:** pick coaches from a list instead of typing names.
 - **Edit a whole series:** "change the coach for all following classes".
 - **Overlap warnings** when two classes clash, using the same overlap rule.
-- **A proper form** instead of `window.prompt` for new classes.
-- **Deploy it:** a real server, Postgres, and `.env` secrets.
+- **Edit forms:** reuse `ClassForm` and `MemberForm` to edit existing classes and members.
 - **Rebuild the frontend in htmx:** the Django models, admin and much of the API carry over.

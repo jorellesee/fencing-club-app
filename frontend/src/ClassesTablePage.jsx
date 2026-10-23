@@ -3,6 +3,7 @@ import { api } from './api'
 import AttendancePanel from './AttendancePanel'
 import { useMe } from './auth'
 import ClassFilters from './ClassFilters'
+import ClassForm from './ClassForm'
 import { attendanceCount, classParams } from './classes'
 import { formatDateTime } from './format'
 import StatusSelect from './StatusSelect'
@@ -24,6 +25,7 @@ export default function ClassesTablePage({ filters, onFiltersChange, onChange })
   const [data, setData] = useState(null)
   const [selectedId, setSelectedId] = useState(null)
   const [error, setError] = useState('')
+  const [creating, setCreating] = useState(false)
 
   useEffect(() => {
     fetchTable(me, query).then(setData).catch((err) => setError(err.message))
@@ -32,6 +34,12 @@ export default function ClassesTablePage({ filters, onFiltersChange, onChange })
   function refresh() {
     fetchTable(me, query).then(setData).catch((err) => setError(err.message))
     onChange()
+  }
+
+  function classCreated(saved) {
+    setCreating(false)
+    refresh()
+    setSelectedId(String(saved.id))
   }
 
   const now = new Date()
@@ -86,12 +94,18 @@ export default function ClassesTablePage({ filters, onFiltersChange, onChange })
           <h1 className="page-title">
             <span className="page-icon">📋</span>{isManager ? 'All classes' : 'My classes'}
           </h1>
-          {isManager && <ClassFilters filters={filters} onChange={onFiltersChange} />}
+          {isManager && (
+            <div className="toolbar">
+              <ClassFilters filters={filters} onChange={onFiltersChange} />
+              <button className="button primary" onClick={() => setCreating(true)}>+ New class</button>
+            </div>
+          )}
           {error && <p className="error">{error}</p>}
           {data && section('Upcoming', upcoming, 'No upcoming classes.')}
           {data && section('Past', past, 'No past classes.')}
         </div>
       </div>
+      {creating && <ClassForm onSaved={classCreated} onClose={() => setCreating(false)} />}
       {selectedId && (
         <AttendancePanel
           key={selectedId}

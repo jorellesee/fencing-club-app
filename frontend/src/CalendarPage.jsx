@@ -7,6 +7,7 @@ import { api } from './api'
 import AttendancePanel from './AttendancePanel'
 import { useMe } from './auth'
 import ClassFilters from './ClassFilters'
+import ClassForm from './ClassForm'
 import { attendanceCount, classParams } from './classes'
 
 function toEvent(fencingClass) {
@@ -24,6 +25,8 @@ export default function CalendarPage({ filters, onFiltersChange, onChange }) {
   const calendarRef = useRef(null)
   const [selectedId, setSelectedId] = useState(null)
   const [error, setError] = useState('')
+  // null when closed; {} for the button, { start, end } for a dragged slot.
+  const [newClass, setNewClass] = useState(null)
 
   function refresh() {
     calendarRef.current.getApi().refetchEvents()
@@ -60,19 +63,15 @@ export default function CalendarPage({ filters, onFiltersChange, onChange }) {
     }
   }
 
-  async function createClass(info) {
+  function chooseSlot(info) {
     calendarRef.current.getApi().unselect()
-    const name = window.prompt('Class name')
-    if (!name) return
-    try {
-      await api('classes/', {
-        method: 'POST',
-        body: { name, start: info.start.toISOString(), end: info.end.toISOString() },
-      })
-      refresh()
-    } catch (err) {
-      setError(err.message)
-    }
+    setNewClass({ start: info.start, end: info.end })
+  }
+
+  function classCreated(saved) {
+    setNewClass(null)
+    refresh()
+    setSelectedId(String(saved.id))
   }
 
   return (
@@ -82,7 +81,12 @@ export default function CalendarPage({ filters, onFiltersChange, onChange }) {
           <span className="page-icon">📅</span>{isManager ? 'Calendar' : 'My calendar'}
         </h1>
         {error && <p className="error">{error}</p>}
-        {isManager && <ClassFilters filters={filters} onChange={onFiltersChange} />}
+        {isManager && (
+          <div className="toolbar">
+            <ClassFilters filters={filters} onChange={onFiltersChange} />
+            <button className="button primary" onClick={() => setNewClass({})}>+ New class</button>
+          </div>
+        )}
         <div className="calendar-body">
           <FullCalendar
             ref={calendarRef}
@@ -103,11 +107,19 @@ export default function CalendarPage({ filters, onFiltersChange, onChange }) {
             selectable={isManager}
             eventDrop={saveTimes}
             eventResize={saveTimes}
-            select={createClass}
+            select={chooseSlot}
             eventClick={(info) => setSelectedId(info.event.id)}
           />
         </div>
       </div>
+      {newClass && (
+        <ClassForm
+          start={newClass.start}
+          end={newClass.end}
+          onSaved={classCreated}
+          onClose={() => setNewClass(null)}
+        />
+      )}
       {selectedId && (
         <AttendancePanel
           key={selectedId}

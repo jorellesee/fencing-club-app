@@ -14,11 +14,23 @@ Including another URLconf
     1. Import the include() function: from django.urls import include, path
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
+from django.conf import settings
 from django.contrib import admin
-from django.urls import include, path
+from django.http import FileResponse, HttpResponseNotFound
+from django.urls import include, path, re_path
+
+
+def react_app(request):
+    """Every other URL gets React's index.html, and React Router picks the page."""
+    index = settings.FRONTEND_DIST / 'index.html'
+    if not index.exists():
+        return HttpResponseNotFound('No React build. In development, use http://localhost:5173.')
+    return FileResponse(open(index, 'rb'), content_type='text/html')
+
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include('club.urls')),
+    re_path(r'^(?!api/|admin/|static/).*$', react_app),
 ]
 

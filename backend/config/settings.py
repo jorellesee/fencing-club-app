@@ -10,22 +10,38 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
+import os
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# The React app's production build (`npm run build`), served by Django online.
+FRONTEND_DIST = BASE_DIR.parent / 'frontend' / 'dist'
 
-# Quick-start development settings - unsuitable for production
+
+# Locally nothing needs setting. Online, Render's environment variables switch
+# debug off and supply the secret key.
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-^mbkpwsbz4(1j(g3yl!3)vf&3w8el9g)uj**-n)$!w3goy06(&'
+DEBUG = os.environ.get('DJANGO_DEBUG', 'true').lower() == 'true'
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+if DEBUG:
+    SECRET_KEY = os.environ.get(
+        'DJANGO_SECRET_KEY',
+        'django-insecure-^mbkpwsbz4(1j(g3yl!3)vf&3w8el9g)uj**-n)$!w3goy06(&',
+    )
+else:
+    SECRET_KEY = os.environ['DJANGO_SECRET_KEY']  # crash rather than run with a known key
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['localhost', '127.0.0.1']
+CSRF_TRUSTED_ORIGINS = ['http://localhost:5173']
+
+# Render sets this to the app's address, e.g. fencing-club.onrender.com.
+RENDER_HOST = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
+if RENDER_HOST:
+    ALLOWED_HOSTS.append(RENDER_HOST)
+    CSRF_TRUSTED_ORIGINS.append(f'https://{RENDER_HOST}')
 
 
 # Application definition
@@ -43,6 +59,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -77,7 +94,8 @@ WSGI_APPLICATION = 'config.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        # Online this points at the persistent disk, which survives deploys.
+        'NAME': os.environ.get('SQLITE_PATH', BASE_DIR / 'db.sqlite3'),
     }
 }
 
@@ -117,6 +135,17 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = 'static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'  # where `collectstatic` copies the admin's files
+
+# WhiteNoise serves static files from gunicorn, with long-lived cache headers.
+STORAGES = {
+    'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
+    'staticfiles': {'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage'},
+}
+
+# Serve the React build's files (assets/, favicon) from the site root.
+if FRONTEND_DIST.exists():
+    WHITENOISE_ROOT = FRONTEND_DIST
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
@@ -128,4 +157,9 @@ REST_FRAMEWORK = {
         'club.permissions.RoleAccess',
     ],
 }
-CSRF_TRUSTED_ORIGINS = ['http://localhost:5173']
+
+if not DEBUG:
+    # Render serves the site over HTTPS and tells Django so with this header.
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True

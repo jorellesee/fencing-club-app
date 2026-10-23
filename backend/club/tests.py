@@ -94,6 +94,28 @@ class ClassApiTests(APITestCase):
         self.junior.refresh_from_db()
         self.assertEqual(self.junior.end, at(20, 18))
 
+    def test_creating_a_class_with_details(self):
+        response = self.client.post('/api/classes/', {
+            'name': 'Sabre Basics', 'start': at(23, 18).isoformat(), 'end': at(23, 19).isoformat(),
+            'coach': 'Coach Lim', 'location': 'Hall A', 'capacity': 10,
+        })
+        self.assertEqual(response.status_code, 201)
+        created = FencingClass.objects.get(name='Sabre Basics')
+        self.assertEqual((created.location, created.capacity), ('Hall A', 10))
+
+    def test_creating_a_member(self):
+        # JSON, like React sends. In form data, a missing checkbox means False.
+        response = self.client.post(
+            '/api/members/', {'name': 'Jo Lim', 'weapon': 'sabre'}, format='json'
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(Member.objects.get(name='Jo Lim').active)
+
+    def test_member_needs_a_name(self):
+        response = self.client.post('/api/members/', {'name': ''})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('name', response.data)
+
 
 class AttendanceApiTests(APITestCase):
     def setUp(self):
@@ -359,6 +381,10 @@ class CoachTests(APITestCase):
 
     def test_cannot_change_members(self):
         response = self.client.patch(f'/api/members/{self.alex.id}/', {'name': 'Alexander'})
+        self.assertEqual(response.status_code, 403)
+
+    def test_cannot_create_members(self):
+        response = self.client.post('/api/members/', {'name': 'Jo Lim'})
         self.assertEqual(response.status_code, 403)
 
     def test_needs_marking_shows_only_own_classes(self):
