@@ -125,7 +125,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.IsAdminUser',
+        'club.permissions.RoleAccess',
     ],
 }
 CSRF_TRUSTED_ORIGINS = ['http://localhost:5173']

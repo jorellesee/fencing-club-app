@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router'
 import { api } from './api'
-
-const STATUSES = ['enrolled', 'present', 'absent', 'excused']
+import { canEdit, useMe } from './auth'
+import StatusSelect from './StatusSelect'
 
 function formatTime(iso) {
   return new Date(iso).toLocaleString([], {
@@ -10,19 +11,23 @@ function formatTime(iso) {
 }
 
 export default function AttendancePanel({ classId, onChange, onClose }) {
+  const me = useMe()
+  const isManager = me.role === 'manager'
   const [fencingClass, setFencingClass] = useState(null)
   const [rows, setRows] = useState([])
   const [members, setMembers] = useState([])
   const [until, setUntil] = useState('')
   const [message, setMessage] = useState('')
+  const [notes, setNotes] = useState('')
 
   async function load() {
     const [classData, attendance, allMembers] = await Promise.all([
       api(`classes/${classId}/`),
       api(`attendance/?fencing_class=${classId}`),
-      api('members/'),
+      isManager ? api('members/') : [],
     ])
     setFencingClass(classData)
+    setNotes(classData.notes)
     setRows(attendance)
     setMembers(allMembers)
   }
@@ -35,6 +40,12 @@ export default function AttendancePanel({ classId, onChange, onClose }) {
     await api(`attendance/${row.id}/`, { method: 'PATCH', body: { status } })
     await load()
     onChange()
+  }
+
+  async function saveNotes() {
+    if (notes === fencingClass.notes) return
+    await api(`classes/${classId}/`, { method: 'PATCH', body: { notes } })
+    await load()
   }
 
   async function addMember(memberId) {
@@ -83,54 +94,80 @@ export default function AttendancePanel({ classId, onChange, onClose }) {
 
   if (!fencingClass) return <aside className="panel">Loading…</aside>
 
+  const editable = canEdit(me, fencingClass.coach)
+
   const available = members.filter(
     (member) => member.active && !rows.some((row) => row.member === member.id),
   )
 
   return (
     <aside className="panel">
-      <button className="close" onClick={onClose}>×</button>
+      <button className="close" onClick={onClose} aria-label="Close">×</button>
       <h2>{fencingClass.name}</h2>
       <p className="meta">
         {formatTime(fencingClass.start)} – {formatTime(fencingClass.end)}
         {fencingClass.coach && ` · ${fencingClass.coach}`}
+        {fencingClass.location && ` · ${fencingClass.location}`}
       </p>
+
+      <h3>Notes</h3>
+      {editable ? (
+        <textarea
+          className="notes"
+          value={notes}
+          placeholder="Add notes…"
+          onChange={(e) => setNotes(e.target.value)}
+          onBlur={saveNotes}
+        />
+      ) : (
+        <p className="meta">{fencingClass.notes || 'No notes.'}</p>
+      )}
 
       <h3>Attendance ({fencingClass.present_count} present)</h3>
       <ul className="attendance">
         {rows.map((row) => (
           <li key={row.id}>
-            <span>{row.member_name}</span>
-            <select value={row.status} onChange={(e) => setStatus(row, e.target.value)}>
-              {STATUSES.map((status) => (
-                <option key={status} value={status}>{status}</option>
-              ))}
-            </select>
-            <button onClick={() => removeRow(row)}>Remove</button>
+            {isManager
+              ? <Link className="row-link" to={`/members/${row.member}`}>{row.member_name}</Link>
+              : <span>{row.member_name}</span>}
+            <StatusSelect
+              value={row.status}
+              readOnly={!editable}
+              onChange={(status) => setStatus(row, status)}
+            />
+            {isManager && (
+              <button className="icon-button" onClick={() => removeRow(row)} aria-label="Remove">×</button>
+            )}
           </li>
         ))}
       </ul>
 
-      <select value="" onChange={(e) => addMember(e.target.value)}>
-        <option value="">Add a member…</option>
-        {available.map((member) => (
-          <option key={member.id} value={member.id}>{member.name}</option>
-        ))}
-      </select>
+      {isManager && (
+        <>
+          <select className="filter" value="" onChange={(e) => addMember(e.target.value)}>
+            <option value="">Add a member…</option>
+            {available.map((member) => (
+              <option key={member.id} value={member.id}>{member.name}</option>
+            ))}
+          </select>
 
-      <h3>Repeat weekly</h3>
-      {fencingClass.series && <p className="meta">Part of a weekly series.</p>}
-      <form className="repeat" onSubmit={repeatWeekly}>
-        <label>
-          Until <input type="date" value={until} onChange={(e) => setUntil(e.target.value)} required />
-        </label>
-        <button>Repeat</button>
-      </form>
-      {message && <p className="meta">{message}</p>}
+          <h3>Repeat weekly</h3>
+          {fencingClass.series && <p className="meta">Part of a weekly series.</p>}
+          <form className="repeat" onSubmit={repeatWeekly}>
+            <label>
+              Until <input type="date" value={until} onChange={(e) => setUntil(e.target.value)} required />
+            </label>
+            <button className="button">Repeat</button>
+          </form>
+          {message && <p className="meta">{message}</p>}
 
-      <button className="danger" onClick={deleteClass}>Delete class</button>
-      {fencingClass.series && (
-        <button className="danger" onClick={deleteFollowing}>Delete this and following</button>
+          <div className="danger-zone">
+            <button className="danger" onClick={deleteClass}>Delete class</button>
+            {fencingClass.series && (
+              <button className="danger" onClick={deleteFollowing}>Delete this and following</button>
+            )}
+          </div>
+        </>
       )}
     </aside>
   )

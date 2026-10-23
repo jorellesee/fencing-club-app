@@ -1,110 +1,110 @@
-import { useRef, useState } from 'react'
-import FullCalendar from '@fullcalendar/react'
-import classicThemePlugin from '@fullcalendar/react/themes/classic'
-import timeGridPlugin from '@fullcalendar/react/timegrid'
-import interactionPlugin from '@fullcalendar/react/interaction'
-import '@fullcalendar/react/skeleton.css'
-import '@fullcalendar/react/themes/classic/theme.css'
-import '@fullcalendar/react/themes/classic/palette.css'
+import { useCallback, useEffect, useState } from 'react'
+import { NavLink, Route, Routes, useLocation, useNavigate } from 'react-router'
 import { api } from './api'
-import AttendancePanel from './AttendancePanel'
+import { MeContext } from './auth'
+import CalendarPage from './CalendarPage'
+import { NO_FILTERS } from './classes'
+import ClassesTablePage from './ClassesTablePage'
+import LoginPage from './LoginPage'
+import MemberPage from './MemberPage'
+import MembersPage from './MembersPage'
+import UnmarkedPage from './UnmarkedPage'
 import './App.css'
 
-function toEvent(fencingClass) {
-  const limit = fencingClass.capacity ?? fencingClass.member_count
-  return {
-    id: String(fencingClass.id),
-    title: `${fencingClass.name} (${fencingClass.present_count}/${limit})`,
-    start: fencingClass.start,
-    end: fencingClass.end,
-  }
-}
+const ROLE_LABELS = { manager: 'Manager', coach: 'Coach', member: 'Member' }
 
 export default function App() {
-  const calendarRef = useRef(null)
-  const [selectedId, setSelectedId] = useState(null)
-  const [error, setError] = useState('')
+  // undefined while checking the session, null when logged out.
+  const [me, setMe] = useState(undefined)
 
-  function refresh() {
-    calendarRef.current.getApi().refetchEvents()
-  }
+  useEffect(() => {
+    api('me/').then(setMe).catch(() => setMe(null))
+  }, [])
 
-  async function loadClasses(info) {
-    const params = new URLSearchParams({
-      start: info.start.toISOString(),
-      end: info.end.toISOString(),
-    })
-    try {
-      const classes = await api(`classes/?${params}`)
-      setError('')
-      return classes.map(toEvent)
-    } catch (err) {
-      setError(err.message)
-      return []
-    }
-  }
-
-  async function saveTimes(info) {
-    try {
-      await api(`classes/${info.event.id}/`, {
-        method: 'PATCH',
-        body: {
-          start: info.event.start.toISOString(),
-          end: info.event.end.toISOString(),
-        },
-      })
-    } catch (err) {
-      setError(err.message)
-      info.revert()
-    }
-  }
-
-  async function createClass(info) {
-    calendarRef.current.getApi().unselect()
-    const name = window.prompt('Class name')
-    if (!name) return
-    try {
-      await api('classes/', {
-        method: 'POST',
-        body: { name, start: info.start.toISOString(), end: info.end.toISOString() },
-      })
-      refresh()
-    } catch (err) {
-      setError(err.message)
-    }
-  }
+  if (me === undefined) return <p className="page muted">Loading…</p>
+  if (me === null) return <LoginPage onLogin={setMe} />
 
   return (
-    <div className="layout">
-      <main className="calendar">
-        {error && <p className="error">{error}</p>}
-        <FullCalendar
-          ref={calendarRef}
-          plugins={[classicThemePlugin, timeGridPlugin, interactionPlugin]}
-          initialView="timeGridWeek"
-          headerToolbar={{
-            start: 'prev,next today',
-            center: 'title',
-            end: 'timeGridWeek,timeGridDay',
-          }}
-          height="100%"
-          events={loadClasses}
-          editable
-          selectable
-          eventDrop={saveTimes}
-          eventResize={saveTimes}
-          select={createClass}
-          eventClick={(info) => setSelectedId(info.event.id)}
-        />
+    <MeContext.Provider value={me}>
+      <Layout me={me} onLogout={() => setMe(null)} />
+    </MeContext.Provider>
+  )
+}
+
+function Layout({ me, onLogout }) {
+  const location = useLocation()
+  const navigate = useNavigate()
+  const [unmarkedCount, setUnmarkedCount] = useState(0)
+  // Shared by the calendar and the table, so switching views keeps them.
+  const [filters, setFilters] = useState(NO_FILTERS)
+  const isManager = me.role === 'manager'
+
+  const refreshCount = useCallback(() => {
+    if (!isManager) return
+    api('attendance/unmarked/')
+      .then((rows) => setUnmarkedCount(rows.length))
+      .catch(() => setUnmarkedCount(0))
+  }, [isManager])
+
+  useEffect(() => {
+    refreshCount()
+  }, [location.pathname, refreshCount])
+
+  async function logout() {
+    await api('logout/', { method: 'POST' })
+    navigate('/')
+    onLogout()
+  }
+
+  const viewProps = { filters, onFiltersChange: setFilters, onChange: refreshCount }
+
+  return (
+    <div className="app">
+      <nav className="sidebar">
+        <div className="workspace">
+          <span className="workspace-icon">🤺</span>
+          Fencing Club
+        </div>
+        <NavLink to="/" end className="nav-item">
+          <span className="nav-icon">📅</span>{isManager ? 'Calendar' : 'My calendar'}
+        </NavLink>
+        <NavLink to="/table" className="nav-item">
+          <span className="nav-icon">📋</span>{isManager ? 'All classes' : 'My classes'}
+        </NavLink>
+        {isManager && (
+          <>
+            <NavLink to="/unmarked" className="nav-item">
+              <span className="nav-icon">✅</span>Needs marking
+              {unmarkedCount > 0 && <span className="badge">{unmarkedCount}</span>}
+            </NavLink>
+            <NavLink to="/members" className="nav-item">
+              <span className="nav-icon">👥</span>Members
+            </NavLink>
+          </>
+        )}
+        <div className="account">
+          <div className="account-name">
+            {me.username}
+            <span className="muted"> · {ROLE_LABELS[me.role]}</span>
+          </div>
+          <button className="nav-item account-logout" onClick={logout}>
+            <span className="nav-icon">↩</span>Log out
+          </button>
+        </div>
+      </nav>
+      <main className="main">
+        <Routes>
+          <Route path="/" element={<CalendarPage {...viewProps} />} />
+          <Route path="/table" element={<ClassesTablePage {...viewProps} />} />
+          {isManager && (
+            <>
+              <Route path="/unmarked" element={<UnmarkedPage onChange={refreshCount} />} />
+              <Route path="/members" element={<MembersPage />} />
+              <Route path="/members/:id" element={<MemberPage onChange={refreshCount} />} />
+            </>
+          )}
+        </Routes>
       </main>
-      {selectedId && (
-        <AttendancePanel
-          key={selectedId}
-          classId={selectedId}
-          onChange={refresh}
-          onClose={() => setSelectedId(null)}
-        />
-      )}
     </div>
   )
 }

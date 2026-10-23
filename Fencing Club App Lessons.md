@@ -11,6 +11,8 @@ How to build the manager-only fencing club app: a Django backend with a REST API
 | [5. React](#lesson-5-the-react-calendar) | The FullCalendar screen talking to Django | Vite, fetch, CSRF, PATCH on drag |
 | [6. Tests](#lesson-6-automated-tests) | Checks that the API works | Django's test runner |
 | [7. Recurring classes](#lesson-7-recurring-classes) | Weekly repeats with copied rosters | `@action`, transactions, `bulk_create` |
+| [10. Logins and roles](#lesson-10-logins-for-managers-coaches-and-members) | Coach and member logins with their own views | `OneToOneField`, DRF permissions, sessions, React context |
+| [11. Calendar and table views](#lesson-11-a-calendar-and-a-table-for-every-role) | Two views per role, and class locations | Shared query helpers, lifting state up |
 
 Versions used: Python 3.10, Django 5.2, Django REST Framework 3.18, Node 24+, React 19, FullCalendar 7.
 
@@ -1731,6 +1733,516 @@ Add to `App.css`:
 
 ---
 
+# Lesson 8: List view and filters
+
+**Goal:** three new ways to look at the same classes:
+
+1. A **list view**: the month's classes as a plain list instead of a grid.
+2. A **coach filter**: show only one coach's classes.
+3. A **member filter**: show only the classes one fencer is on the roster for.
+
+## The design
+
+All three are **views of the same `classes/` endpoint**. Nothing new is stored, so there are no model changes and no migrations.
+
+| View | Where the work happens |
+| --- | --- |
+| List | Only in React. FullCalendar has a built-in list view, fed by the same `loadClasses` |
+| Per coach | Django filters by `?coach=Coach Lim` |
+| Per member | Django filters by `?member=3` |
+
+Filtering in Django rather than in React means the browser only downloads the classes it shows. It's the same pattern as the `?start=&end=` week filter from Lesson 4.
+
+**What's added:**
+
+1. `?coach=` and `?member=` filters on `GET /api/classes/`.
+2. `GET /api/classes/coaches/`, which returns every coach name once, for the dropdown.
+3. Tests for both.
+4. A **list** button and two dropdowns on the calendar.
+
+## Step 1: The filters
+
+In `club/views.py`, in `FencingClassViewSet.get_queryset`, add two filters after the week filter, just before `return queryset`:
+
+```python
+        coach = self.request.query_params.get('coach')
+        if coach:
+            queryset = queryset.filter(coach=coach)
+        member = self.request.query_params.get('member')
+        if member:
+            queryset = queryset.filter(attendance__member=member)
+        return queryset
+```
+
+- **`query_params.get(...)`** returns `None` when the parameter is missing, so with no filter you still get every class.
+- **`attendance__member=member`** follows the link from a class to its attendance rows to their member: "classes that have an attendance row for this member". The double underscore crosses a relationship, like `attendance__status` in the `present_count` annotation.
+- **Filters chain.** `?coach=Coach Lim&member=3` gives Coach Lim's classes that member 3 attends. Each `.filter()` narrows the result further.
+
+## Step 2: The coaches endpoint
+
+Coach is a plain text field on each class, not its own table, so there's no `/api/coaches/` list. Build one from the classes. Add this action to `FencingClassViewSet`, next to `repeat`:
+
+```python
+    @action(detail=False)
+    def coaches(self, request):
+        names = (
+            FencingClass.objects.exclude(coach='')
+            .order_by('coach')
+            .values_list('coach', flat=True)
+            .distinct()
+        )
+        return Response(list(names))
+```
+
+Open http://localhost:8000/api/classes/coaches/ to see the list.
+
+- **`detail=False`** makes this a list-level action: `/api/classes/coaches/` rather than `/api/classes/5/coaches/`. `repeat` is `detail=True` because it acts on one class.
+- **`exclude(coach='')`** skips classes with no coach.
+- **`values_list('coach', flat=True)`** fetches only the coach column, as a flat list of strings, instead of whole `FencingClass` objects.
+- **`.distinct()`** removes duplicates: 30 weekly classes by Coach Lim become one "Coach Lim".
+- **Why `order_by('coach')` is required:** the model's `Meta.ordering = ['start']` would otherwise add `start` to the query. Django would then treat each (coach, start) pair as distinct, and every name would appear once per class. Ordering by `coach` replaces the default ordering.
+
+## Step 3: Tests
+
+Add to the bottom of `club/tests.py`:
+
+```python
+class FilterTests(APITestCase):
+    def setUp(self):
+        manager = User.objects.create_user('manager', is_staff=True)
+        self.client.force_login(manager)
+        self.alex = Member.objects.create(name='Alex Tan')
+        self.sam = Member.objects.create(name='Sam Lee')
+        self.junior = FencingClass.objects.create(
+            name='Junior Foil', start=at(20, 17), end=at(20, 18), coach='Coach Lim'
+        )
+        self.senior = FencingClass.objects.create(
+            name='Senior Epee', start=at(21, 19), end=at(21, 21), coach='Coach Wong'
+        )
+        FencingClass.objects.create(
+            name='Open Bouting', start=at(22, 19), end=at(22, 21), coach='Coach Lim'
+        )
+        Attendance.objects.create(fencing_class=self.junior, member=self.alex, status='present')
+        Attendance.objects.create(fencing_class=self.junior, member=self.sam, status='enrolled')
+        Attendance.objects.create(fencing_class=self.senior, member=self.sam, status='present')
+
+    def names(self, response):
+        return [c['name'] for c in response.data]
+
+    def test_coach_filter(self):
+        response = self.client.get('/api/classes/', {'coach': 'Coach Lim'})
+        self.assertEqual(self.names(response), ['Junior Foil', 'Open Bouting'])
+
+    def test_member_filter(self):
+        response = self.client.get('/api/classes/', {'member': self.sam.id})
+        self.assertEqual(self.names(response), ['Junior Foil', 'Senior Epee'])
+
+    def test_member_filter_keeps_whole_class_counts(self):
+        response = self.client.get('/api/classes/', {'member': self.alex.id})
+        junior = response.data[0]
+        self.assertEqual(junior['member_count'], 2)
+        self.assertEqual(junior['present_count'], 1)
+
+    def test_coaches_lists_each_name_once(self):
+        response = self.client.get('/api/classes/coaches/')
+        self.assertEqual(response.data, ['Coach Lim', 'Coach Wong'])
+```
+
+Running `python manage.py test` gives 21 tests, all passing.
+
+- **`self.client.get(url, {...})`** turns the dict into a query string: `?coach=Coach+Lim`.
+- **Why test the counts?** Filtering on `attendance__member` joins the attendance table a second time. If that join leaked into `Count('attendance')`, Junior Foil would show 1 member (only Alex's row) instead of 2. The test proves the headcount is still for the whole class. It holds because the unique constraint allows only one row per member per class.
+- **Break it on purpose:** remove `.order_by('coach')` from `coaches` and run the tests. `test_coaches_lists_each_name_once` fails with "Coach Lim" twice. Put it back.
+
+## Step 4: The list view
+
+In `frontend/src/App.jsx`, import the list plugin with the others:
+
+```jsx
+import listPlugin from '@fullcalendar/react/list'
+```
+
+Add it to `plugins`, and add a `listMonth` button to the toolbar:
+
+```jsx
+          plugins={[classicThemePlugin, timeGridPlugin, listPlugin, interactionPlugin]}
+          initialView="timeGridWeek"
+          headerToolbar={{
+            start: 'prev,next today',
+            center: 'title',
+            end: 'timeGridWeek,timeGridDay,listMonth',
+          }}
+```
+
+- **A plugin** adds views or features to FullCalendar. `listPlugin` adds `listDay`, `listWeek`, `listMonth` and `listYear`.
+- **No backend change:** the list view calls the same `loadClasses` with the month's `start` and `end`. Clicking a row opens the side panel, as on the grid.
+
+## Step 5: The filter dropdowns
+
+Still in `App.jsx`, change the React import to include `useEffect`:
+
+```jsx
+import { useEffect, useRef, useState } from 'react'
+```
+
+Add state and loading under `const [error, setError] = useState('')`:
+
+```jsx
+  const [coaches, setCoaches] = useState([])
+  const [members, setMembers] = useState([])
+  const [coach, setCoach] = useState('')
+  const [member, setMember] = useState('')
+
+  useEffect(() => {
+    api('classes/coaches/').then(setCoaches)
+    api('members/').then(setMembers)
+  }, [])
+```
+
+In `loadClasses`, add the filters to the query string, after `const params = …`:
+
+```jsx
+    if (coach) params.set('coach', coach)
+    if (member) params.set('member', member)
+```
+
+In the JSX, add the dropdowns under the error message, and wrap `<FullCalendar … />` in a `calendar-body` div:
+
+```jsx
+        {error && <p className="error">{error}</p>}
+        <div className="filters">
+          <select value={coach} onChange={(e) => setCoach(e.target.value)}>
+            <option value="">All coaches</option>
+            {coaches.map((name) => (
+              <option key={name} value={name}>{name}</option>
+            ))}
+          </select>
+          <select value={member} onChange={(e) => setMember(e.target.value)}>
+            <option value="">All members</option>
+            {members.map((m) => (
+              <option key={m.id} value={m.id}>{m.name}</option>
+            ))}
+          </select>
+        </div>
+        <div className="calendar-body">
+          <FullCalendar
+            …everything as before…
+          />
+        </div>
+```
+
+In `App.css`, replace the `.calendar` rule and add two new ones:
+
+```css
+.calendar {
+  flex: 1;
+  min-width: 0;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+}
+
+.calendar-body {
+  flex: 1;
+  min-height: 0;
+}
+
+.filters {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+```
+
+- **`useEffect(…, [])`** runs once, when the page first loads. The empty `[]` means "don't re-run when anything changes".
+- **`.then(setCoaches)`**: when the request finishes, its JSON (an array of names) goes straight into state.
+- **`""` means "all".** `if (coach)` skips empty strings, so "All coaches" sends no filter.
+- **How a filter change refetches:** choosing a coach calls `setCoach`, React re-renders `App`, and `loadClasses` is created again, holding the new `coach`. FullCalendar sees a different `events` function and refetches with it. You don't need to call `refresh()`.
+- **Why the `calendar-body` wrapper?** `height="100%"` makes FullCalendar as tall as its parent. Without the wrapper it would be as tall as `.calendar` *plus* the dropdowns, and the page would scroll. As a flex column, `.calendar` gives the dropdowns their natural height and `calendar-body` (`flex: 1`) the rest.
+
+## Try it
+
+1. Give a few classes a coach in the admin (http://localhost:8000/admin/), then reload the React page.
+2. Pick a coach. Only their classes stay, in week view and in **list**.
+3. Pick a member as well. Only that coach's classes with that member on the roster stay. The headcount still shows the whole class.
+4. Click a row in list view. The side panel opens.
+5. Set both back to "All".
+
+## Limits of this design
+
+- **The coach list is loaded once.** A coach added in the admin appears in the dropdown after a page reload.
+- **With a member filter on, a new class disappears** as soon as you create it, because it has no members yet. Add members with the filter set to "All members".
+- **Coach is free text,** so "Coach Lim" and "coach lim" count as two coaches. A `Coach` model with a `ForeignKey`, like `Member`, would fix that. It's a natural next lesson.
+
+---
+
+# Lesson 9: Member profiles, "Needs marking", and a Notion-style redesign
+
+**Goal:** two new pages a manager uses every week, plus a sidebar to move between pages. Claude built this one; read through the files below to learn from it.
+
+## What was added
+
+| Where | What |
+| --- | --- |
+| `club/views.py` | `MemberViewSet` annotates `present_count`, `marked_count`, `last_present`. `AttendanceViewSet` takes `?member=` and has an `unmarked` action |
+| `club/serializers.py` | Members return those three stats. Attendance rows also return `class_name` and `class_start` |
+| `club/tests.py` | `MemberStatsTests` and `UnmarkedTests` (25 tests in total) |
+| `main.jsx`, `App.jsx` | React Router, the sidebar, and one `<Route>` per page |
+| `CalendarPage.jsx` | The old `App.jsx` calendar, moved into its own page |
+| `UnmarkedPage.jsx` | Past classes with members still *enrolled*, grouped by class |
+| `MembersPage.jsx`, `MemberPage.jsx` | A members table, and one member's profile with their class history |
+| `StatusSelect.jsx`, `format.js` | Shared pieces: the coloured status dropdown and date/rate helpers |
+| `App.css` | Notion-style colours, typography, tables, tags and dark mode |
+
+## Key ideas
+
+### Aggregating across a relationship
+
+```python
+Member.objects.annotate(
+    present_count=Count('attendance', filter=Q(attendance__status='present')),
+    marked_count=Count('attendance', filter=Q(attendance__status__in=['present', 'absent'])),
+    last_present=Max('attendance__fencing_class__start', filter=Q(attendance__status='present')),
+)
+```
+
+- **`Count(..., filter=Q(...))`** counts only the matching rows, in one query for every member at once.
+- **`Max('attendance__fencing_class__start')`** walks member → attendance → class and takes the latest start.
+- **Attendance rate = present ÷ (present + absent).** Excused classes and ones not yet marked don't count against anyone. The division happens in React (`attendanceRate` in `format.js`), because Django already supplies both numbers.
+
+### "Unmarked" is just a filter
+
+```python
+status='enrolled', fencing_class__end__lt=timezone.now()
+```
+
+"Still enrolled after the class ended" means nobody took the register. It's sorted by class start, then class, so each class's rows sit together and React can group them in one pass (`groupByClass`).
+
+### Avoiding N+1 again
+
+The attendance serializer now reads `fencing_class.name`, so `get_queryset` uses `select_related('member', 'fencing_class')`. Without it, each row would run its own query for its class.
+
+### Routing
+
+- **`<BrowserRouter>`** in `main.jsx` lets the URL decide which page shows.
+- **`<Routes>` / `<Route path="/members/:id">`** maps URLs to pages. **`useParams()`** reads `:id` inside `MemberPage`.
+- **`<NavLink>`** is a link that adds the `active` class when you're on its page. The sidebar uses it for highlighting.
+- **The sidebar badge** reloads its count whenever the URL changes, and pages call `onChange` after marking someone.
+
+### Styling with CSS variables
+
+All colours are variables on `:root` (`--text`, `--border`, `--tag-green-bg`, …), redefined inside `@media (prefers-color-scheme: dark)`. FullCalendar's theme is also driven by variables (`--fc-classic-*`), so setting those to ours makes the calendar match, in both light and dark. The FullCalendar CSS is imported in `main.jsx` before `App.css`, so our values win.
+
+## Try it
+
+1. Make sure you're logged in at http://localhost:8000/admin/, then open http://localhost:5173.
+2. **Needs marking** shows a red count if any past class still has *enrolled* members. Mark one present; it disappears and the count drops. Try **Mark all present**.
+3. **Members** shows each fencer's attendance bar. Click a name.
+4. On the profile, change a status in the history. The rate updates.
+5. Click a name in the calendar's side panel. It opens that member's profile.
+6. Switch macOS to dark mode. The whole app follows.
+
+---
+
+# Lesson 10: Logins for managers, coaches and members
+
+**Goal:** the app was manager-only. Now coaches and members log in too, and each role sees and changes only what it should. Claude built this one; read through the files below to learn from it.
+
+## Who can do what
+
+| | Manager | Coach | Member |
+| --- | --- | --- | --- |
+| **Who they are** | A staff user (*Staff status* ticked) | A login with a coach profile | A login with a member profile |
+| **Calendar** | Every class. Drag, create, delete, repeat | Every class, read-only | Only classes they're on |
+| **Mark attendance** | Any class | Only classes they coach | No |
+| **Class notes** | Edit any | Edit their own classes' notes | Read |
+| **Needs marking** | Every class | Their own classes | Hidden |
+| **Members** | Everyone, editable in the admin | Everyone, read-only | Only their own profile ("My attendance") |
+
+## What was added
+
+| Where | What |
+| --- | --- |
+| `club/models.py` | `Profile`: a one-to-one link from a login to a role, plus the `Member` or coach name it belongs to |
+| `club/permissions.py` | `role_of(user)` and `RoleAccess`, the permission class every API view now uses |
+| `config/settings.py` | `DEFAULT_PERMISSION_CLASSES` changed from `IsAdminUser` to `club.permissions.RoleAccess` |
+| `club/views.py` | Each viewset says what coaches and members may do. Querysets shrink for members. New `me`, `login_view`, `logout_view` |
+| `club/urls.py` | `/api/me/`, `/api/login/`, `/api/logout/` |
+| `club/admin.py` | The *Users* page gets a *Profile* section, and a *Role* column |
+| `club/serializers.py` | Attendance rows also return the class's `coach` |
+| `club/tests.py` | `CoachTests`, `MemberRoleTests`, `AccountTests` (44 tests in total) |
+| `auth.js` | `MeContext`, `useMe()` and `canEdit(me, coach)` |
+| `LoginPage.jsx` | The login form |
+| `App.jsx` | Asks `/api/me/` who's logged in; shows the login page or a sidebar for that role, with *Log out* |
+| `CalendarPage.jsx`, `AttendancePanel.jsx`, `MemberPage.jsx`, `StatusSelect.jsx` | Hide or lock what the role can't change. The panel now shows class notes |
+
+## Key ideas
+
+### Managers are just staff
+
+Managers need the Django admin to create logins, and the admin only lets in staff. So "manager" means `is_staff`, and the existing superuser is a manager without any changes. Only coaches and members get a `Profile`:
+
+```python
+def role_of(user):
+    if not user.is_authenticated:
+        return None
+    if user.is_staff:
+        return MANAGER
+    profile = getattr(user, 'profile', None)
+    return profile.role if profile else None
+```
+
+A login with neither is refused everywhere, the same as being logged out.
+
+### `OneToOneField`
+
+`Profile.user` and `Profile.member` are one-to-one: each login has at most one profile, and each member at most one login. Django gives you `user.profile` and `member.profile` in both directions, and lookups can walk them: `Member.objects.filter(profile__user=request.user)` means "the member whose profile belongs to this login".
+
+`Profile.clean()` makes sure a member profile picks a member and a coach profile has a coach name. The admin calls `clean()` before saving, so a manager can't save a half-filled profile.
+
+### Two layers: what you can see, what you can change
+
+**Seeing** is done in `get_queryset`. For a member, the classes list is filtered to their own:
+
+```python
+if role_of(self.request.user) == MEMBER:
+    queryset = queryset.filter(attendance__member__profile__user=self.request.user)
+```
+
+Asking for someone else's member page then gives **404**, as if it doesn't exist, rather than 403. That way it doesn't reveal which IDs are real.
+
+**Changing** is done by the permission class. Each viewset lists what the other roles may do:
+
+```python
+class AttendanceViewSet(viewsets.ModelViewSet):
+    role_actions = {
+        COACH: {'list', 'retrieve', 'partial_update', 'unmarked'},
+        MEMBER: {'list', 'retrieve'},
+    }
+    role_fields = {COACH: {'status'}}
+
+    def can_edit(self, user, row):
+        return row.fencing_class.coach == user.profile.coach_name
+```
+
+`RoleAccess` checks these in two steps:
+
+- **`has_permission`** runs before anything is loaded. It refuses an action that isn't listed (a coach's `destroy`), and a change touching fields that aren't listed (a coach's PATCH that includes `fencing_class`).
+- **`has_object_permission`** runs once DRF has fetched the row, when a view calls `get_object()`. It calls the viewset's `can_edit`, so a coach can only change rows in their own classes.
+
+`partial_update` is DRF's name for PATCH. Leaving `update` (PUT) out of the list means coaches can only send the fields they're changing.
+
+### Hiding buttons is not security
+
+React hides the drag handles, delete buttons and dropdowns a role can't use. That's only for comfort: anyone can send requests by hand. The backend checks every request, and the tests prove it. `canEdit` in `auth.js` mirrors the backend rule so the screen matches what will actually be allowed.
+
+### Logging in from React
+
+Before, you logged in at `/admin/`, which only lets in staff. Now:
+
+1. `App` calls **`GET /api/me/`**. It returns who's logged in, or `null`. It's decorated with `@ensure_csrf_cookie`, so the browser has a `csrftoken` cookie before anyone logs in.
+2. The login form **`POST`s `/api/login/`**. Django's `authenticate()` checks the password and `login()` starts the session. The session cookie then rides along on every request, as before.
+3. **Log out** `POST`s `/api/logout/`.
+
+These three are plain Django views, not DRF ones. DRF switches off Django's CSRF check for logged-out requests, which would let another site log you in to an account of its choosing. Plain views keep `CsrfViewMiddleware` checking the login form too.
+
+### React context
+
+Almost every page needs to know who's logged in. Instead of passing `me` down through every component, `App` wraps everything in `<MeContext.Provider value={me}>`, and any component can call `useMe()`.
+
+### Coaches are matched by name
+
+`FencingClass.coach` is still free text, so a coach profile stores a `coach_name` that must match it exactly. "Coach Lim" and "coach lim" are different people. The `Coach` model in *What's next* would fix this with a real link.
+
+## Try it
+
+1. Run `python manage.py migrate` (adds the profile table), then start both servers.
+2. In the admin, open **Users → Add user**. Make `lim` with a password and save. In the **Profile** section pick *Coach*, type a coach name exactly as it appears on some classes, and save again.
+3. Add another user, pick *Member* and choose a member.
+4. Open http://localhost:5173 in a private window and log in as the coach. Drag a class: it won't move. Open one of their classes: statuses and notes can be changed. Open another coach's class: everything is read-only. **Needs marking** lists only their classes.
+5. Log in as the member. They see **My classes** and **My attendance**, nothing else.
+6. Try going to `/members` as the member: there's no page. Try `http://localhost:5173/api/members/` directly: **403**.
+
+---
+
+# Lesson 11: A calendar and a table for every role
+
+**Goal:** every role gets the same two views of classes, a **calendar** and a **table**, each showing the classes that role cares about. Classes also get a **location**. Claude built this one; read through the files below to learn from it.
+
+## What each role sees now
+
+This replaces the table in Lesson 10.
+
+| | Manager | Coach | Member |
+| --- | --- | --- | --- |
+| **Sidebar** | Calendar, All classes, Needs marking, Members | My calendar, My classes | My calendar, My classes |
+| **Which classes** | Every class, filtered by coach, member and/or location | Only the classes they coach | Only the classes they're on |
+| **Table's last column** | Present / capacity | Present / capacity | Their own status |
+| **Click a class** | Full side panel | Mark attendance, edit notes | Read-only details |
+
+Both views show past and upcoming classes. The table splits them into **Upcoming** (soonest first) and **Past** (most recent first).
+
+## What was added
+
+| Where | What |
+| --- | --- |
+| `club/models.py` + migration `0006` | `FencingClass.location`, a text field like `coach` |
+| `club/views.py` | `?location=` filter, a `locations` action listing each location once, and `repeat` copies the location |
+| `club/admin.py`, `club/serializers.py` | Location shown, filterable and searchable in the admin, and returned by the API |
+| `club/tests.py` | Location filter, combined filters, `locations`, repeat copies location (47 tests) |
+| `classes.js` | `classParams(me, filters)`: the classes query for a role. Also `NO_FILTERS` and `attendanceCount` |
+| `ClassFilters.jsx` | The coach / member / location dropdowns and a *Clear* button, taken out of `CalendarPage` |
+| `ClassesTablePage.jsx` | The table view, with the same side panel as the calendar |
+| `App.jsx` | Holds the filters, so they stay put when you switch views. Builds each role's sidebar and routes |
+| `CalendarPage.jsx`, `AttendancePanel.jsx` | Use the shared filters. The panel shows the location and only links names for managers |
+
+## Key ideas
+
+### Two views, one query
+
+The calendar and the table ask the same question: "which classes should this person see?" Both get the answer from one function:
+
+```js
+export function classParams(me, filters) {
+  const params = new URLSearchParams()
+  if (me.role === 'manager') {
+    for (const [key, value] of Object.entries(filters)) {
+      if (value) params.set(key, value)
+    }
+  } else if (me.role === 'coach') {
+    params.set('coach', me.coach_name)
+  }
+  return params
+}
+```
+
+The calendar then adds `start` and `end` for the visible week. The table leaves them off, so it gets every class.
+
+Filters combine with AND, because each one is another `.filter()` on the same queryset: `?location=Hall A&member=3` means classes in Hall A *that* member 3 is on.
+
+### Lifting state up
+
+Filters used to live inside `CalendarPage`. Now both pages need them, and switching pages unmounts the old one, which would throw its state away. So the state moves up to their common parent, `Layout` in `App.jsx`, and goes down as props (`filters`, `onFiltersChange`). This is React's standard answer to "two components need the same state".
+
+### Whose job is "only my classes"?
+
+- **Members:** the backend. Lesson 10's `get_queryset` already returns only their classes, whatever React asks for.
+- **Coaches:** React, by sending `?coach=` with their own name. The API still lets a coach read other classes, which is what we chose: this is about what's useful to show, not about secrets. Changing other coaches' classes is still refused by the backend.
+
+### A member's own status
+
+The classes API returns counts, not one person's status. So the member's table makes a second request, for `attendance/?member=<their id>`, and turns the rows into a lookup: `{ classId: status }`. Both requests run at the same time with `Promise.all`.
+
+## Try it
+
+1. Run `python manage.py migrate` (adds the location column). In the admin, give a few classes a location.
+2. As a manager, open **All classes**. Pick a location, then a member: both filters apply. Switch to **Calendar**: the same filters are still set. Click **Clear**.
+3. Click a row in the table. The side panel opens, as on the calendar.
+4. Log in as a coach. The sidebar has just **My calendar** and **My classes**, showing only their classes.
+5. Log in as a member. **My classes** shows their status for each class.
+
+---
+
 # Check your understanding: questions and answers
 
 <details>
@@ -1792,10 +2304,52 @@ Add to `App.css`:
 
 </details>
 
+<details>
+<summary><b>Lesson 8</b></summary>
+
+1. **Why filter in Django instead of hiding classes in React?** The browser downloads only the classes it shows, and the filter works for anything that uses the API, not just this page.
+2. **What does `detail=False` change?** The URL. The action lives at `/api/classes/coaches/` and works on the whole list, not on one class at `/api/classes/5/...`.
+3. **Why does `coaches` need `order_by('coach')`?** The model's default ordering adds `start` to the query, and `.distinct()` would then keep one row per (coach, start) pair, repeating names.
+4. **Why does choosing a coach refetch without calling `refresh()`?** The re-render creates a new `loadClasses`, and FullCalendar refetches whenever its `events` function changes.
+
+</details>
+
+<details>
+<summary><b>Lesson 9</b></summary>
+
+1. **Why doesn't an excused class lower the attendance rate?** The rate is present ÷ (present + absent). Excused and not-yet-marked rows are left out of both numbers.
+2. **What does "unmarked" mean in database terms?** An attendance row whose status is still `enrolled` and whose class's `end` is in the past.
+3. **Why was `'fencing_class'` added to `select_related`?** The serializer now reads the class's name and start for each row. Without the join, that's one extra query per row.
+4. **What does `useParams()` return on `/members/7`?** `{ id: '7' }`. Note that it's a string.
+
+</details>
+
+<details>
+<summary><b>Lesson 10</b></summary>
+
+1. **Why does another member's profile give 404, not 403?** The member's queryset doesn't contain it, so DRF can't find it. That hides which IDs exist.
+2. **What stops a coach from moving a class by PATCHing `start`?** `role_fields` only allows `notes` on classes, so `has_permission` refuses the request before anything is loaded.
+3. **When does `has_object_permission` run?** When the view calls `get_object()`, i.e. for one specific row (retrieve, update, delete, or an action with `detail=True`). It never runs for `list`.
+4. **Why are login and logout plain Django views?** So `CsrfViewMiddleware` checks them. DRF skips the CSRF check for logged-out requests.
+5. **If React hides the delete button, why test the backend?** Anyone can send requests without the app. Only the backend's checks actually protect the data.
+
+</details>
+
+<details>
+<summary><b>Lesson 11</b></summary>
+
+1. **Why do the filters live in `App.jsx` instead of each page?** Switching pages unmounts the old page and loses its state. The common parent outlives both pages, so it keeps the filters.
+2. **Why doesn't React send a filter for members?** The backend already limits members to their own classes, whatever is asked.
+3. **Can a coach still read another coach's class through the API?** Yes. Only the views limit them to their own. Changing it is still refused.
+4. **Why does the member's table make two requests?** Class rows carry counts for the whole class, not one member's status. That comes from their attendance rows.
+
+</details>
+
 ---
 
 # What's next
 
+- **A `Coach` model:** pick coaches from a list instead of typing names.
 - **Edit a whole series:** "change the coach for all following classes".
 - **Overlap warnings** when two classes clash, using the same overlap rule.
 - **A proper form** instead of `window.prompt` for new classes.

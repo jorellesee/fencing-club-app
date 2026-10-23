@@ -2,11 +2,13 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from django.contrib.auth.models import User
+from django.core.exceptions import ValidationError
 from django.db import IntegrityError
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APITestCase
 
-from .models import Attendance, FencingClass, Member
+from .models import Attendance, FencingClass, Member, Profile
 
 SGT = ZoneInfo('Asia/Singapore')
 
@@ -48,9 +50,9 @@ class ClassApiTests(APITestCase):
         response = self.client.get('/api/classes/')
         self.assertEqual(response.status_code, 403)
 
-    def test_non_managers_are_refused(self):
-        coach = User.objects.create_user('coach')
-        self.client.force_login(coach)
+    def test_logins_without_a_role_are_refused(self):
+        nobody = User.objects.create_user('nobody')
+        self.client.force_login(nobody)
         response = self.client.get('/api/classes/')
         self.assertEqual(response.status_code, 403)
 
@@ -137,7 +139,8 @@ class RepeatTests(APITestCase):
         self.client.force_login(manager)
         self.alex = Member.objects.create(name='Alex Tan')
         self.junior = FencingClass.objects.create(
-            name='Junior Foil', start=at(20, 17), end=at(20, 18), coach='Coach Lim'
+            name='Junior Foil', start=at(20, 17), end=at(20, 18), coach='Coach Lim',
+            location='Hall A',
         )
         Attendance.objects.create(fencing_class=self.junior, member=self.alex, status='present')
 
@@ -161,6 +164,7 @@ class RepeatTests(APITestCase):
         for copy in copies:
             self.assertEqual(copy.series, self.junior.series)
             self.assertEqual(copy.coach, 'Coach Lim')
+            self.assertEqual(copy.location, 'Hall A')
 
     def test_copies_enrol_the_same_members(self):
         self.repeat(self.junior, '2026-10-27')
@@ -190,3 +194,258 @@ class RepeatTests(APITestCase):
 
         self.assertEqual(response.json()['deleted'], 3)
         self.assertEqual(list(FencingClass.objects.all()), [self.junior])
+
+
+class FilterTests(APITestCase):
+    def setUp(self):
+        manager = User.objects.create_user('manager', is_staff=True)
+        self.client.force_login(manager)
+        self.alex = Member.objects.create(name='Alex Tan')
+        self.sam = Member.objects.create(name='Sam Lee')
+        self.junior = FencingClass.objects.create(
+            name='Junior Foil', start=at(20, 17), end=at(20, 18), coach='Coach Lim',
+            location='Hall A',
+        )
+        self.senior = FencingClass.objects.create(
+            name='Senior Epee', start=at(21, 19), end=at(21, 21), coach='Coach Wong',
+            location='Hall B',
+        )
+        FencingClass.objects.create(
+            name='Open Bouting', start=at(22, 19), end=at(22, 21), coach='Coach Lim',
+            location='Hall A',
+        )
+        Attendance.objects.create(fencing_class=self.junior, member=self.alex, status='present')
+        Attendance.objects.create(fencing_class=self.junior, member=self.sam, status='enrolled')
+        Attendance.objects.create(fencing_class=self.senior, member=self.sam, status='present')
+
+    def names(self, response):
+        return [c['name'] for c in response.data]
+
+    def test_coach_filter(self):
+        response = self.client.get('/api/classes/', {'coach': 'Coach Lim'})
+        self.assertEqual(self.names(response), ['Junior Foil', 'Open Bouting'])
+
+    def test_member_filter(self):
+        response = self.client.get('/api/classes/', {'member': self.sam.id})
+        self.assertEqual(self.names(response), ['Junior Foil', 'Senior Epee'])
+
+    def test_member_filter_keeps_whole_class_counts(self):
+        response = self.client.get('/api/classes/', {'member': self.alex.id})
+        junior = response.data[0]
+        self.assertEqual(junior['member_count'], 2)
+        self.assertEqual(junior['present_count'], 1)
+
+    def test_coaches_lists_each_name_once(self):
+        response = self.client.get('/api/classes/coaches/')
+        self.assertEqual(response.data, ['Coach Lim', 'Coach Wong'])
+
+    def test_location_filter(self):
+        response = self.client.get('/api/classes/', {'location': 'Hall A'})
+        self.assertEqual(self.names(response), ['Junior Foil', 'Open Bouting'])
+
+    def test_filters_combine(self):
+        response = self.client.get('/api/classes/', {'location': 'Hall A', 'member': self.sam.id})
+        self.assertEqual(self.names(response), ['Junior Foil'])
+
+    def test_locations_lists_each_name_once(self):
+        response = self.client.get('/api/classes/locations/')
+        self.assertEqual(response.data, ['Hall A', 'Hall B'])
+
+
+class MemberStatsTests(APITestCase):
+    def setUp(self):
+        manager = User.objects.create_user('manager', is_staff=True)
+        self.client.force_login(manager)
+        self.alex = Member.objects.create(name='Alex Tan')
+        statuses = ['present', 'present', 'absent', 'excused', 'enrolled']
+        for day, status in zip(range(19, 24), statuses):
+            fencing_class = FencingClass.objects.create(
+                name='Junior Foil', start=at(day, 17), end=at(day, 18)
+            )
+            Attendance.objects.create(fencing_class=fencing_class, member=self.alex, status=status)
+
+    def test_counts_only_present_and_absent_as_marked(self):
+        alex = self.client.get(f'/api/members/{self.alex.id}/').data
+        self.assertEqual(alex['present_count'], 2)
+        self.assertEqual(alex['marked_count'], 3)
+
+    def test_last_present_is_the_latest_present_class(self):
+        alex = self.client.get(f'/api/members/{self.alex.id}/').data
+        self.assertEqual(alex['last_present'], at(20, 17).isoformat())
+
+    def test_history_is_newest_first(self):
+        rows = self.client.get('/api/attendance/', {'member': self.alex.id}).data
+        self.assertEqual([row['status'] for row in rows][:2], ['enrolled', 'excused'])
+        self.assertEqual(rows[0]['class_name'], 'Junior Foil')
+
+
+class UnmarkedTests(APITestCase):
+    def setUp(self):
+        manager = User.objects.create_user('manager', is_staff=True)
+        self.client.force_login(manager)
+        self.alex = Member.objects.create(name='Alex Tan')
+        self.sam = Member.objects.create(name='Sam Lee')
+
+    def add(self, start, end, member, status):
+        fencing_class = FencingClass.objects.create(name='Junior Foil', start=start, end=end)
+        Attendance.objects.create(fencing_class=fencing_class, member=member, status=status)
+
+    def test_lists_enrolled_rows_in_past_classes_only(self):
+        past = timezone.now() - timedelta(days=1)
+        future = timezone.now() + timedelta(days=1)
+        self.add(past, past + timedelta(hours=1), self.alex, 'enrolled')
+        self.add(past, past + timedelta(hours=1), self.sam, 'present')
+        self.add(future, future + timedelta(hours=1), self.sam, 'enrolled')
+
+        rows = self.client.get('/api/attendance/unmarked/').data
+
+        self.assertEqual([row['member_name'] for row in rows], ['Alex Tan'])
+
+
+class CoachTests(APITestCase):
+    def setUp(self):
+        self.alex = Member.objects.create(name='Alex Tan')
+        self.mine = FencingClass.objects.create(
+            name='Junior Foil', start=at(20, 17), end=at(20, 18), coach='Coach Lim'
+        )
+        self.theirs = FencingClass.objects.create(
+            name='Senior Épée', start=at(21, 19), end=at(21, 20), coach='Coach Ng'
+        )
+        self.my_row = Attendance.objects.create(
+            fencing_class=self.mine, member=self.alex, status='enrolled'
+        )
+        self.their_row = Attendance.objects.create(
+            fencing_class=self.theirs, member=self.alex, status='enrolled'
+        )
+        coach = User.objects.create_user('lim')
+        Profile.objects.create(user=coach, role='coach', coach_name='Coach Lim')
+        self.client.force_login(coach)
+
+    def test_sees_every_class(self):
+        response = self.client.get('/api/classes/')
+        self.assertEqual(len(response.data), 2)
+
+    def test_marks_attendance_in_own_class(self):
+        response = self.client.patch(f'/api/attendance/{self.my_row.id}/', {'status': 'present'})
+        self.assertEqual(response.status_code, 200)
+
+    def test_cannot_mark_another_coachs_class(self):
+        response = self.client.patch(
+            f'/api/attendance/{self.their_row.id}/', {'status': 'present'}
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_can_only_change_status(self):
+        response = self.client.patch(
+            f'/api/attendance/{self.my_row.id}/', {'status': 'present', 'fencing_class': self.theirs.id}
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_edits_notes_but_not_times_of_own_class(self):
+        notes = self.client.patch(f'/api/classes/{self.mine.id}/', {'notes': 'Bring masks'})
+        times = self.client.patch(f'/api/classes/{self.mine.id}/', {'start': at(20, 16)})
+        self.assertEqual(notes.status_code, 200)
+        self.assertEqual(times.status_code, 403)
+
+    def test_cannot_create_delete_or_repeat_classes(self):
+        create = self.client.post(
+            '/api/classes/', {'name': 'New', 'start': at(22, 17), 'end': at(22, 18)}
+        )
+        delete = self.client.delete(f'/api/classes/{self.mine.id}/')
+        repeat = self.client.post(f'/api/classes/{self.mine.id}/repeat/', {'until': '2026-11-30'})
+        self.assertEqual(
+            [create.status_code, delete.status_code, repeat.status_code], [403, 403, 403]
+        )
+
+    def test_cannot_change_members(self):
+        response = self.client.patch(f'/api/members/{self.alex.id}/', {'name': 'Alexander'})
+        self.assertEqual(response.status_code, 403)
+
+    def test_needs_marking_shows_only_own_classes(self):
+        rows = self.client.get('/api/attendance/unmarked/').data
+        self.assertEqual([row['id'] for row in rows], [self.my_row.id])
+
+
+class MemberRoleTests(APITestCase):
+    def setUp(self):
+        self.alex = Member.objects.create(name='Alex Tan')
+        self.sam = Member.objects.create(name='Sam Lee')
+        self.junior = FencingClass.objects.create(
+            name='Junior Foil', start=at(20, 17), end=at(20, 18)
+        )
+        self.senior = FencingClass.objects.create(
+            name='Senior Épée', start=at(21, 19), end=at(21, 20)
+        )
+        self.alex_row = Attendance.objects.create(
+            fencing_class=self.junior, member=self.alex, status='present'
+        )
+        Attendance.objects.create(fencing_class=self.junior, member=self.sam, status='present')
+        Attendance.objects.create(fencing_class=self.senior, member=self.sam, status='present')
+        user = User.objects.create_user('alex')
+        Profile.objects.create(user=user, role='member', member=self.alex)
+        self.client.force_login(user)
+
+    def test_sees_only_own_classes_with_whole_class_counts(self):
+        classes = self.client.get('/api/classes/').data
+        self.assertEqual([c['name'] for c in classes], ['Junior Foil'])
+        self.assertEqual(classes[0]['member_count'], 2)
+
+    def test_sees_only_own_attendance(self):
+        rows = self.client.get('/api/attendance/', {'fencing_class': self.junior.id}).data
+        self.assertEqual([row['member_name'] for row in rows], ['Alex Tan'])
+
+    def test_sees_own_profile_only(self):
+        own = self.client.get(f'/api/members/{self.alex.id}/')
+        other = self.client.get(f'/api/members/{self.sam.id}/')
+        everyone = self.client.get('/api/members/')
+        self.assertEqual(
+            [own.status_code, other.status_code, everyone.status_code], [200, 404, 403]
+        )
+
+    def test_cannot_mark_attendance(self):
+        response = self.client.patch(f'/api/attendance/{self.alex_row.id}/', {'status': 'absent'})
+        self.assertEqual(response.status_code, 403)
+
+
+class AccountTests(APITestCase):
+    def setUp(self):
+        self.alex = Member.objects.create(name='Alex Tan')
+        self.user = User.objects.create_user('alex', password='en-garde-123')
+        Profile.objects.create(user=self.user, role='member', member=self.alex)
+
+    def log_in(self, password):
+        return self.client.post(
+            '/api/login/', {'username': 'alex', 'password': password}, format='json'
+        )
+
+    def test_logged_out_me_is_null(self):
+        response = self.client.get('/api/me/')
+        self.assertIsNone(response.json())
+        self.assertIn('csrftoken', response.cookies)
+
+    def test_log_in_then_me(self):
+        self.assertEqual(self.log_in('en-garde-123').status_code, 200)
+        me = self.client.get('/api/me/').json()
+        self.assertEqual(me['role'], 'member')
+        self.assertEqual(me['member'], self.alex.id)
+
+    def test_wrong_password(self):
+        self.assertEqual(self.log_in('touché').status_code, 400)
+
+    def test_login_without_a_role_is_refused(self):
+        self.user.profile.delete()
+        self.assertEqual(self.log_in('en-garde-123').status_code, 400)
+
+    def test_staff_are_managers(self):
+        self.client.force_login(User.objects.create_user('boss', is_staff=True))
+        self.assertEqual(self.client.get('/api/me/').json()['role'], 'manager')
+
+    def test_log_out(self):
+        self.log_in('en-garde-123')
+        self.client.post('/api/logout/')
+        self.assertIsNone(self.client.get('/api/me/').json())
+
+    def test_member_profile_needs_a_member(self):
+        profile = Profile(user=User.objects.create_user('sam'), role='member')
+        with self.assertRaises(ValidationError):
+            profile.full_clean()
