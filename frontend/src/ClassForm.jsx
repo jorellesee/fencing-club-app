@@ -19,7 +19,7 @@ function initialForm(fencingClass, start, end) {
       date: toDateInput(new Date(fencingClass.start)),
       startTime: toTimeInput(new Date(fencingClass.start)),
       endTime: toTimeInput(new Date(fencingClass.end)),
-      coach: fencingClass.coach,
+      coach: fencingClass.coach ?? '',
       location: fencingClass.location,
       weapon: fencingClass.weapon,
       capacity: fencingClass.capacity ?? '',
@@ -50,7 +50,7 @@ export default function ClassForm({ fencingClass, start, end, onSaved, onClose }
   const [error, setError] = useState(null)
 
   useEffect(() => {
-    api('classes/coaches/').then(setCoaches)
+    api('coaches/').then(setCoaches)
     api('classes/locations/').then(setLocations)
   }, [])
 
@@ -62,7 +62,7 @@ export default function ClassForm({ fencingClass, start, end, onSaved, onClose }
     event.preventDefault()
     const shared = {
       name: form.name,
-      coach: form.coach,
+      coach: form.coach === '' ? null : Number(form.coach),
       location: form.location,
       weapon: form.weapon,
       capacity: form.capacity === '' ? null : Number(form.capacity),
@@ -135,16 +135,18 @@ export default function ClassForm({ fencingClass, start, end, onSaved, onClose }
         <div className="form-row">
           <label>
             Coach
-            <input value={form.coach} onChange={set('coach')} list="coach-options" />
+            <select value={form.coach} onChange={set('coach')}>
+              <option value="">None</option>
+              {coaches
+                .filter((coach) => coach.active || coach.id === fencingClass?.coach)
+                .map((coach) => <option key={coach.id} value={coach.id}>{coach.name}</option>)}
+            </select>
           </label>
           <label>
             Capacity
             <input type="number" min="1" value={form.capacity} onChange={set('capacity')} />
           </label>
         </div>
-        <datalist id="coach-options">
-          {coaches.map((name) => <option key={name} value={name} />)}
-        </datalist>
         <datalist id="location-options">
           {locations.map((name) => <option key={name} value={name} />)}
         </datalist>

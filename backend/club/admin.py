@@ -2,14 +2,24 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 from django.contrib.auth.models import User
 
-from .models import Attendance, FencingClass, Member, Profile
+from .models import Attendance, Coach, FencingClass, LessonRequest, Member, Profile
 from .permissions import role_of
 
 @admin.register(Member)
 class MemberAdmin(admin.ModelAdmin):
+    list_display = ['name', 'weapon', 'primary_coach', 'email', 'phone', 'active']
+    list_filter = ['weapon', 'primary_coach', 'active']
+    search_fields = ['name', 'email']
+    autocomplete_fields = ['primary_coach']
+
+
+@admin.register(Coach)
+class CoachAdmin(admin.ModelAdmin):
     list_display = ['name', 'weapon', 'email', 'phone', 'active']
     list_filter = ['weapon', 'active']
     search_fields = ['name', 'email']
+
+
 class AttendanceInline(admin.TabularInline):
     model = Attendance
     extra = 0
@@ -22,8 +32,9 @@ class FencingClassAdmin(admin.ModelAdmin):
         'name', 'start', 'end', 'coach', 'location', 'weapon', 'capacity', 'present_count',
     ]
     list_filter = ['coach', 'location', 'weapon']
-    search_fields = ['name', 'coach', 'location']
+    search_fields = ['name', 'coach__name', 'location']
     date_hierarchy = 'start'
+    autocomplete_fields = ['coach']
     inlines = [AttendanceInline]
 
     @admin.display(description='Present')
@@ -39,14 +50,21 @@ class AttendanceAdmin(admin.ModelAdmin):
     autocomplete_fields = ['member', 'fencing_class']
 
 
+@admin.register(LessonRequest)
+class LessonRequestAdmin(admin.ModelAdmin):
+    list_display = ['member', 'coach', 'start', 'status']
+    list_filter = ['status', 'coach']
+    autocomplete_fields = ['member', 'coach', 'fencing_class']
+
+
 class ProfileInline(admin.StackedInline):
     model = Profile
     can_delete = False
-    autocomplete_fields = ['member']
+    autocomplete_fields = ['member', 'coach']
 
 
-# Logins are created here: tick "Staff status" for a manager, or give a coach
-# or member a profile below.
+# Coaches and members are usually invited from their page in the app. Here,
+# tick "Staff status" for a manager, or give a coach or member a profile below.
 admin.site.unregister(User)
 
 

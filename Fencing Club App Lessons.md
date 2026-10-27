@@ -2668,6 +2668,373 @@ Upload and unzip the new `dist.zip` if needed (delete the old `dist/` first), th
 
 ---
 
+# Lesson 16: Inviting people to log in
+
+**Goal:** a manager invites a coach or member by email. They click the link, choose their own password, and are logged in. Anyone can reset a forgotten password from the login page, and managers can switch a login off. Claude built this one; read through the files below to learn from it.
+
+## What was added
+
+| Where | What |
+| --- | --- |
+| `config/settings.py` | `FRONTEND_URL` for links, email settings, and links that last 7 days |
+| `club/emails.py` (new) | Builds the set-password link and sends the invite and reset emails |
+| `club/serializers.py` | `login_status()`, a `login` field on members, `LoginSerializer` and `InviteSerializer` |
+| `club/views.py` | `LoginViewSet` (`/api/logins/`), `password-reset/`, `set-password/<uid>/<token>/`, and login by email with an attempt limit |
+| `club/tests.py` | Invites, links working once, resending, switching off, resets, and who can do what |
+| `SetPasswordPage.jsx` (new) | Where the email links land, for invites and resets alike |
+| `LoginsPage.jsx` (new) | The manager's **Logins** page: everyone's status, **Invite**, **Resend invite**, **Switch off/on** |
+| `LoginPage.jsx` | "Email or username", and **Forgot password?** |
+| `MemberPage.jsx` | A **Login** row with **Invite to log in** |
+| `App.jsx` | `/set-password/...` works logged in or out, and a Logins link for managers |
+
+## Key ideas
+
+### An invite is a password reset in disguise
+
+When the manager invites Alex, the server creates the `User` and `Profile` straight away, but with **no usable password**:
+
+```python
+user = User(username=email, email=email)
+user.set_unusable_password()
+```
+
+The email then contains a link to choose a password. That's exactly what a "forgot password" link does, so both use the same page and the same code. The only difference is the wording.
+
+Until Alex sets a password, nobody can log in as them, and the Logins page shows **Invited**.
+
+### Links that work once, without a table of tokens
+
+Django's `default_token_generator` makes a token from the user's id, their **password hash**, their last login, and the time:
+
+```python
+uid = urlsafe_base64_encode(force_bytes(user.pk))
+token = default_token_generator.make_token(user)
+```
+
+Nothing is saved in the database. To check a link, Django rebuilds the token from the user's *current* data and compares. So:
+
+- **Setting the password changes the hash**, and the link stops working. Each link works once.
+- **Resending calls `set_unusable_password()` again**, which makes a new random hash, so the old email's link stops working too.
+- **Links expire** after `PASSWORD_RESET_TIMEOUT` (7 days here).
+
+### The role comes from the manager, never the form
+
+The set-password page only sends a password. Who the person is (member or coach, and which member) was decided when the manager invited them, and is already in their `Profile`. Someone can't edit the request to make themselves a manager.
+
+### Not giving anything away
+
+- **Password reset always gives the same answer**, "If that email has a login, we've sent it a link", so nobody can use it to find out who's in the club.
+- **Too many attempts:** `too_many_attempts()` counts tries in Django's cache. After 10 logins as one username, or 3 reset requests for one email, in 15 minutes, it refuses. It's counted per username, not per computer, because PythonAnywhere's proxy makes every visitor look like the same address.
+- **Switching off** sets `is_active = False`. Django refuses to log them in, and their existing session stops working. Their attendance history stays, which deleting the login would also keep, but this way you can switch them back on.
+
+### Email in development and online
+
+Locally, `EMAIL_BACKEND` is the **console backend**: emails are printed in the `runserver` terminal, link and all. Tests use Django's in-memory outbox, `mail.outbox`, which is how the tests find the link.
+
+Online, set these in the WSGI file and `postactivate` (Lesson 15), e.g. for Gmail with an [app password](https://myaccount.google.com/apppasswords):
+
+```bash
+export EMAIL_HOST=smtp.gmail.com
+export EMAIL_HOST_USER=yourclub@gmail.com
+export EMAIL_HOST_PASSWORD='the 16-letter app password'
+export DEFAULT_FROM_EMAIL='Fencing Club <yourclub@gmail.com>'
+```
+
+PythonAnywhere's free tier allows SMTP to Gmail. `FRONTEND_URL` becomes `https://<SITE_HOST>` by itself.
+
+## Try it
+
+1. Run both servers. No migration is needed: invites reuse `User` and `Profile`.
+2. As a manager, give a member an email, open their page and click **Invite to log in**. The email appears in the `runserver` terminal.
+3. Open the link in a private window. Choose a password: try `123` first to see Django's password rules. You land in the app as that member.
+4. Click the same link again. It says it has expired or been used.
+5. Go to **Logins**, click **Invite**, choose **Coach**, and invite a coach by name and email.
+6. **Switch off** the member, then try to log in as them.
+7. Log out, click **Forgot password?**, and reset a password.
+
+# Lesson 17: Coaches get their own table
+
+**Goal:** coaches become real records, like members, with a **Coaches** page in the sidebar. A class picks its coach from a list instead of a typed name, and a coach's login is tied to that coach. Claude built this one; read through the files below to learn from it.
+
+## What was added
+
+| Where | What |
+| --- | --- |
+| `club/models.py` | A `Coach` model. `FencingClass.coach` and `Profile.coach` now point at it, replacing the typed names |
+| `club/migrations/0008_coach.py` | Makes a `Coach` for every coach name already in the database and links the classes and logins to it |
+| `club/serializers.py` | `CoachSerializer`, a `coach_name` on classes, and invites take a `coach` like they take a `member` |
+| `club/views.py` | `CoachViewSet` (`/api/coaches/`) with class counts and the next class. `classes/coaches/` is gone |
+| `club/admin.py` | Coaches in the admin, and coach pickers with search |
+| `club/tests.py` | Coach CRUD, unique names, counts, and coach logins using the new link |
+| `CoachesPage.jsx`, `CoachPage.jsx`, `CoachForm.jsx` (new) | The list, one coach's page (details, login, upcoming and recent classes), and a form to add or edit |
+| `ClassForm.jsx`, `ClassFilters.jsx`, `LoginsPage.jsx` | Pick a coach from a dropdown |
+| `auth.js`, `classes.js` | `me.coach` is now the coach's id, not their name |
+
+## Key ideas
+
+### Why a typed name wasn't enough
+
+Before, a class's coach was just text, and a coach login worked by having *exactly the same text* in `Profile.coach_name`. Type "Coach Lim" on one class and "coach lim" on another and they were two different coaches, and the login silently stopped seeing one of them. Renaming a coach meant editing every class.
+
+A `ForeignKey` stores the coach's **id** instead. There's one row per coach, so renaming them renames them everywhere, and the login compares ids, which can't be mistyped.
+
+```python
+coach = models.ForeignKey(
+    Coach, on_delete=models.SET_NULL, null=True, blank=True, related_name='classes'
+)
+```
+
+`SET_NULL` means deleting a coach leaves their classes in place with no coach, rather than deleting the classes (`CASCADE`) or refusing (`PROTECT`). `related_name='classes'` is what lets the view write `Count('classes')`.
+
+### A migration that moves data
+
+Changing a column's type would lose the names already typed in, so `0008_coach.py` does it in steps:
+
+1. Create the `Coach` table.
+2. Rename the old text fields out of the way (`coach` → `coach_name`).
+3. Add the new `coach` links, empty.
+4. **`RunPython`**: for every name, `get_or_create` a `Coach` and point the class or login at it.
+5. Remove the old text fields.
+
+Inside a migration you use `apps.get_model('club', 'Coach')`, not `from .models import Coach`. The real model is how the code looks *today*; `apps.get_model` gives you the model as it was at this point in the migration history. The second function passed to `RunPython` undoes it, so `migrate club 0007` works too.
+
+On PythonAnywhere, `git pull` then `python manage.py migrate` (Lesson 15) runs the same conversion on the live data.
+
+### Invites now match for members and coaches
+
+A coach used to be invited with a name and an email typed into the form. Now the email lives on the coach, just like a member, so `InviteSerializer` takes either `member` or `coach` and treats them the same way: no email, no invite.
+
+### A login with no coach sees nothing
+
+If a coach is deleted, their login's `Profile.coach` becomes `None`. A careless check `class.coach_id == profile.coach_id` would then be `None == None`, which is **true** for every class with no coach. `coaches_class()` in `views.py` checks for `None` first, and there's a test for it.
+
+## Try it
+
+1. Run `python manage.py migrate`. Open **Coaches**: everyone you'd typed as a coach is there already.
+2. Click **New coach**, then open them and click **Edit coach** to add an email.
+3. Edit a class and pick the new coach from the dropdown. Their page shows it under **Upcoming classes**.
+4. On the coach's page, click **Invite to log in**, accept the invite in a private window, and check you can mark that class.
+5. Rename the coach. The calendar and table show the new name everywhere.
+
+# Lesson 18: Editing members, and their primary coach
+
+**Goal:** managers can edit a member from their page, and each member can have a **primary coach** picked from the Coaches table. Claude built this one.
+
+## What was added
+
+| Where | What |
+| --- | --- |
+| `club/models.py` | `Member.primary_coach`, a `ForeignKey` to `Coach` |
+| `club/migrations/0009_member_primary_coach.py` | Adds the column. Everyone starts with no primary coach |
+| `club/serializers.py` | `primary_coach` (the id) and `primary_coach_name` on members |
+| `club/views.py` | `/api/members/?primary_coach=<id>` |
+| `club/tests.py` | Editing, setting the coach, the filter, and deleting the coach |
+| `MemberForm.jsx` | Adds *or* edits, like `CoachForm`, with a **Primary coach** dropdown |
+| `MemberPage.jsx` | **Edit member** for managers, and a **Primary coach** row |
+| `MembersPage.jsx`, `CoachPage.jsx` | A Primary coach column, and a coach's **Members they coach** |
+
+## Key ideas
+
+### The backend already allowed edits
+
+`MemberViewSet` is a `ModelViewSet`, so `PATCH /api/members/<id>/` has worked since Lesson 4. Only the page was missing. `RoleAccess` still refuses edits from coaches and members, because neither lists `partial_update` in `role_actions`.
+
+### `'Coach'` in quotes
+
+`Member` is defined above `Coach` in `models.py`, so `Coach` doesn't exist yet when Python reads `Member`. Writing `models.ForeignKey('Coach', ...)` as a string lets Django look it up once every model is loaded.
+
+### `related_name='members'`
+
+That's the name for going the other way: `coach.members.all()` is everyone with that coach as their primary coach. Without it, Django would call it `coach.member_set`.
+
+### PATCH vs POST in one form
+
+The form sends `PATCH` when it was given a member, and `POST` otherwise. With `PATCH`, only the fields you send change, and the attendance counts are read-only, so sending the whole form is safe.
+
+## Try it
+
+1. Run `python manage.py migrate`.
+2. Open a member, click **Edit member**, pick a primary coach, and save.
+3. Click the coach's name. The member is listed under **Members they coach**.
+4. Log in as a coach and open the same member. There's no Edit button, and the API refuses a `PATCH` too.
+
+# Lesson 19: Members book classes and edit their own details
+
+**Goal:** a member can enrol themselves in upcoming classes, cancel an enrolment, and change their own name, phone and weapon. Claude built this one.
+
+## What was added
+
+| Where | What |
+| --- | --- |
+| `club/views.py` | `POST /api/classes/<id>/enrol/` and `/unenrol/`, `?bookable=1`, and members may `PATCH` themselves |
+| `club/tests.py` | Enrolling, full and past classes, cancelling, and which fields a member can change |
+| `BookPage.jsx` (new) | **Book a class**: upcoming classes they're not on, with spots left and **Enrol** |
+| `AttendancePanel.jsx` | **Enrol** or **Cancel enrolment** for members on an upcoming class |
+| `MemberPage.jsx`, `MemberForm.jsx` | **My profile** with **Edit my details**, showing only what a member can change |
+| `App.jsx` | **Book a class** and **My profile** in a member's sidebar |
+
+## Key ideas
+
+### Same permission class, more entries
+
+Nothing new was needed in `permissions.py`. `RoleAccess` (Lesson 10) already reads three things from each viewset, so members get access by listing it:
+
+```python
+role_actions = {MEMBER: {'retrieve', 'partial_update'}}
+role_fields = {MEMBER: {'name', 'phone', 'weapon'}}
+```
+
+`role_fields` is why a member's `PATCH` with `email`, `active` or `primary_coach` is refused with 403, even though the manager's form sends them. **Email** stays with the manager because it's also the login: changing it would change where password reset links go.
+
+### Actions instead of letting members write attendance
+
+Members could have been given `create` on `/api/attendance/`, but then the request would say *which* member and *what* status. An `enrol` action takes nothing from the request: the member comes from `request.user.profile.member` and the status is always `enrolled`. The action checks the rules before creating the row:
+
+- The membership is active.
+- The class hasn't started yet.
+- The member isn't already on the class.
+- The class isn't full (`capacity`).
+
+`unenrol` only deletes a row that is still `enrolled` in an upcoming class. Once a coach has marked it, cancelling is up to a manager.
+
+### A subquery keeps the headcounts right
+
+A member now has to be able to open classes they're *not* on yet, so their queryset became "mine **or** upcoming". Writing "mine" as a join (`attendance__member__profile__user=...`) inside an `OR` would repeat each class once per attendance row and inflate `member_count`. So "mine" is a subquery instead:
+
+```python
+mine = Q(id__in=Attendance.objects.filter(
+    member__profile__user=self.request.user
+).values('fencing_class'))
+```
+
+## Try it
+
+1. No migration this time. Log in as a member with an active membership.
+2. Open **Book a class** and click **Enrol**. The class moves to **My classes** and **My calendar**.
+3. Open it there and click **Cancel enrolment**.
+4. As a manager, set a class's capacity to how many are already on it. The member sees **Full**.
+5. As the member, open **My profile**, click **Edit my details**, and change your phone. The email box is greyed out.
+
+# Lesson 20: Private lessons
+
+**Goal:** a member picks one of their coaches, sees when that coach is busy (but not with what), drags across a free time to ask for a lesson, and the coach accepts or declines. Claude built this one.
+
+## What was added
+
+| Where | What |
+| --- | --- |
+| `club/models.py` | `LessonRequest`: member, coach, times, note, status, and the class it became |
+| `club/migrations/0010_lessonrequest.py` | The new table |
+| `club/views.py` | `LessonRequestViewSet` at `/api/lesson-requests/`, with `coaches/`, `busy/`, `accept/`, `decline/` and `cancel/` |
+| `club/tests.py` | Which coaches, busy times, clashes, accepting, declining, cancelling, and who can do each |
+| `LessonsPage.jsx` (new) | A member's **Private lessons**: pick a coach, their week with **Busy** blocks, and **My requests** |
+| `LessonRequestPanel.jsx` (new) | Opens from a dashed request on the calendar, with **Accept** and **Decline** (see Lesson 21) |
+
+## Key ideas
+
+### A request becomes a class
+
+Accepting a request creates a `FencingClass` with `capacity=1`, the member enrolled, and the coach set:
+
+```python
+fencing_class = FencingClass.objects.create(
+    name=f'Private lesson: {lesson.member.name}', start=lesson.start, end=lesson.end,
+    coach=lesson.coach, weapon=lesson.member.weapon, capacity=1, notes=lesson.note,
+)
+```
+
+Because it's an ordinary class, it shows on the calendars and in the tables, and the coach marks attendance the usual way. Nothing else had to learn about lessons. The one exception: **Book a class** must not offer it to other members, so the member queryset leaves out classes with a `lesson_request`.
+
+### Busy, but not with what
+
+`busy/` returns only `start` and `end`:
+
+```python
+slots = [*classes.values('start', 'end'), *pending.values('start', 'end')]
+```
+
+`.values()` asks the database for just those columns, so names, members and notes can't leak even by accident. Pending requests count as busy too, so two members can't ask for the same slot. The member's own requests are left out of `busy/`, because the page draws them from `list/` with their status.
+
+### Which coaches are "theirs"
+
+`coaches_of(member)` is their primary coach, plus the coach of any class they're on:
+
+```python
+Coach.objects.filter(Q(members=member) | Q(classes__attendance__member=member), active=True).distinct()
+```
+
+`members` and `classes` are the `related_name`s from Lessons 17 and 18. `.distinct()` is there because the join returns a coach once per matching class.
+
+### Who can do what
+
+The same `RoleAccess` lists again:
+
+| | List | Request | Cancel | Accept / decline |
+| --- | --- | --- | --- | --- |
+| Member | Their own | Their own coaches | Their own, before it starts | — |
+| Coach | Their own | — | — | Their own |
+| Manager | Everyone's | — | — | Anyone's |
+
+Cancelling an accepted lesson deletes its class.
+
+## Try it
+
+1. Run `python manage.py migrate`.
+2. As a manager, give a member a primary coach (Lesson 18).
+3. As that member, open **Private lessons**. Their coach's classes show as grey **Busy** blocks.
+4. Drag across a free time, add a note, and **Send request**. It shows as yellow **Requested**.
+5. As the coach (or a manager), click the dashed yellow request on the calendar and **Accept**. It becomes "Private lesson: …".
+6. As another member with the same coach, open **Private lessons**. That time is just **Busy**.
+
+# Lesson 21: Peek at members, and requests on the calendar
+
+**Goal:** clicking a member opens a side panel, like classes do, instead of a separate page. Pending lesson requests show on the main calendar instead of their own tab. Claude built this one.
+
+## What changed
+
+| Where | What |
+| --- | --- |
+| `MemberPage.jsx` → `MemberPanel.jsx` | The same details as a side panel. **My profile** still shows them as a page |
+| `MembersPage.jsx` | Clicking a row opens the panel. The member is in the URL: `/members?member=3` |
+| `App.jsx` | The **Lesson requests** tab is gone. Old `/members/3` links redirect to the panel |
+| `LessonRequestPanel.jsx` (new) | Replaces `LessonRequestsPage.jsx`. Opens from the calendar |
+| `CalendarPage.jsx` | Loads pending requests beside classes, dashed and yellow |
+| `club/views.py` | `lesson-requests/` takes `start`, `end`, `coach` and `member`, like `classes/` |
+| `LoginRow.jsx` (new) | Replaces the **Logins** tab: the **Login** row on a member or coach now has **Invite**, **Resend invite** and **Switch off/on** |
+| `ClassesHeader.jsx` (new) | One **Classes** item in the sidebar, with a **Calendar \| List** switch on the page instead of a separate **All classes** tab |
+
+## Key ideas
+
+### One component, two wrappers
+
+`MemberDetails` holds everything about a member. `MemberPanel` puts it in an `<aside className="panel">` with a close button. `MemberProfilePage` puts it in a `<div className="page">`. The CSS shrinks the avatar and title when they're `.panel` children, so nothing inside had to change.
+
+### The selection lives in the URL
+
+`useSearchParams()` reads and writes `?member=3`. The coach page and the class panel can then link straight to a member with an ordinary `<Link>`, and the browser's back button closes the panel.
+
+### Two kinds of event on one calendar
+
+`loadClasses` fetches classes and pending requests together, then merges them. Each request carries its data in `extendedProps`, so `eventClick` knows which panel to open:
+
+```js
+const lesson = event.extendedProps.lesson
+```
+
+Requests have no location or weapon, so when either of those filters is set, requests are hidden rather than shown wrongly.
+
+### One sidebar item, two routes
+
+The calendar is still `/` and the list is still `/table`, so the filters App keeps carry across. The switch is two `NavLink`s, which add an `active` class by themselves. The sidebar item checks `useLocation().pathname` instead, so it stays highlighted on both.
+
+## Try it
+
+1. As a manager, open **Members** and click a row. Edit them from the panel, then press back.
+2. As a member, request a lesson from **Private lessons**. It shows dashed on **My calendar**.
+3. As the coach, it's dashed on their calendar too. Click it and **Accept**. The new class's panel opens.
+
+---
+
 # Check your understanding: questions and answers
 
 <details>
@@ -2811,11 +3178,22 @@ Upload and unzip the new `dist.zip` if needed (delete the old `dist/` first), th
 
 </details>
 
+<details>
+<summary><b>Lesson 16</b></summary>
+
+1. **Why create the user at invite time instead of when they accept?** The profile, role and member link are decided by the manager, so they're saved then. The person only adds a password. It also lets the Logins page show who's been invited.
+2. **How does a link stop working after it's used, with no tokens in the database?** The token is built from the password hash. Setting the password changes the hash, so the rebuilt token no longer matches.
+3. **Why does the reset page say the same thing for unknown emails?** Otherwise anyone could type in emails to find out who has a login at the club.
+4. **Why count login attempts per username, not per IP address?** Behind PythonAnywhere's proxy, every visitor can look like the same address, so a per-address limit would lock everyone out at once.
+5. **Why switch a login off instead of deleting it?** It can be switched back on, and the person keeps the same profile and email.
+
+</details>
+
 ---
 
 # What's next
 
-- **A `Coach` model:** pick coaches from a list instead of typing names.
+- **A `Coach` model:** pick coaches from a list instead of typing names. Coach logins would then link to it instead of matching `coach_name` text.
 - **Overlap warnings** when two classes clash, using the same overlap rule.
 - **Edit members** in the app, reusing `MemberForm` the way `ClassForm` now edits classes.
 - **Rebuild the frontend in htmx:** the Django models, admin and much of the API carry over.

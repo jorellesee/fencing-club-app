@@ -9,7 +9,7 @@ export default function ClassFilters({ filters, onChange }) {
   const [locations, setLocations] = useState([])
 
   useEffect(() => {
-    api('classes/coaches/').then(setCoaches)
+    api('coaches/').then(setCoaches)
     api('members/').then(setMembers)
     api('classes/locations/').then(setLocations)
   }, [])
@@ -24,8 +24,8 @@ export default function ClassFilters({ filters, onChange }) {
     <div className="filters">
       <select className="filter" value={filters.coach} onChange={(e) => set('coach', e.target.value)}>
         <option value="">All coaches</option>
-        {coaches.map((name) => (
-          <option key={name} value={name}>{name}</option>
+        {coaches.map((coach) => (
+          <option key={coach.id} value={coach.id}>{coach.name}</option>
         ))}
       </select>
       <select className="filter" value={filters.member} onChange={(e) => set('member', e.target.value)}>

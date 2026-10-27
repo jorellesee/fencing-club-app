@@ -168,17 +168,6 @@ input {
   text-align: center;
 }
 
-.badge {
-  margin-left: auto;
-  padding: 0 6px;
-  border-radius: 10px;
-  background: var(--red);
-  color: #fff;
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 18px;
-}
-
 .main {
   flex: 1;
   min-width: 0;
@@ -457,29 +446,6 @@ input {
 
 .strong {
   font-weight: 500;
-}
-
-/* Grouped list on the Needs marking page */
-
-.group {
-  margin-bottom: 32px;
-}
-
-.group-header {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  padding: 0 8px 6px;
-}
-
-.group-header h2 {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.group-header .button {
-  margin-left: auto;
 }
 
 /* Controls */
@@ -772,4 +738,133 @@ input[type="date"] {
   display: flex;
   gap: 8px;
   align-items: center;
+}
+
+/* Logins */
+
+.link-button {
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font: inherit;
+}
+
+.link-button:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+.login-link-button {
+  text-align: center;
+  text-decoration: none;
+}
+
+.login-card p {
+  margin: 0;
+}
+
+.hint {
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.notice {
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--tag-green-bg);
+  color: var(--tag-green-text);
+}
+
+.row-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.login-row {
+  gap: 8px;
+}
+
+/* Private lessons: a coach's week, with room for the requests table below */
+.page-wide {
+  max-width: 1100px;
+}
+
+.lesson-calendar {
+  height: 620px;
+  margin-bottom: 32px;
+}
+
+/* Member peek: the same details as the profile page, fitted to the panel */
+.panel .page-title {
+  margin-top: 0;
+  font-size: 28px;
+}
+
+.panel .avatar {
+  width: 56px;
+  height: 56px;
+  font-size: 26px;
+}
+
+.panel .properties {
+  grid-template-columns: 112px 1fr;
+}
+
+.panel .properties dd {
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.history-class {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.history-class .muted {
+  font-size: 12px;
+}
+
+/* Pending lesson requests on the calendar: dashed until a coach answers */
+.event-request {
+  border: 1.5px dashed var(--tag-yellow-text) !important;
+}
+
+.panel-actions {
+  justify-content: flex-start;
+  margin: 24px 0 8px;
+}
+
+/* Classes heading, with the Calendar | List switch */
+.title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.view-toggle {
+  display: flex;
+  flex-shrink: 0;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--hover);
+}
+
+.view-toggle a {
+  padding: 4px 12px;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  text-decoration: none;
+}
+
+.view-toggle a.active {
+  background: var(--bg);
+  box-shadow: var(--shadow);
+  color: var(--text);
 }

@@ -11,7 +11,8 @@ export function classParams(me, filters) {
       if (value) params.set(key, value)
     }
   } else if (me.role === 'coach') {
-    params.set('coach', me.coach_name)
+    // 0 matches no classes, for a coach login not linked to a coach.
+    params.set('coach', me.coach ?? 0)
   }
   return params
 }

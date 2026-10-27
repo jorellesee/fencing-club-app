@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from './api'
 import AttendancePanel from './AttendancePanel'
 import { useMe } from './auth'
+import ClassesHeader from './ClassesHeader'
 import ClassFilters from './ClassFilters'
 import ClassForm from './ClassForm'
 import { attendanceCount, classParams } from './classes'
@@ -18,7 +19,7 @@ async function fetchTable(me, query) {
   return { classes, myStatus }
 }
 
-export default function ClassesTablePage({ filters, onFiltersChange, onChange }) {
+export default function ClassesTablePage({ filters, onFiltersChange }) {
   const me = useMe()
   const isManager = me.role === 'manager'
   const query = classParams(me, filters).toString()
@@ -33,7 +34,6 @@ export default function ClassesTablePage({ filters, onFiltersChange, onChange })
 
   function refresh() {
     fetchTable(me, query).then(setData).catch((err) => setError(err.message))
-    onChange()
   }
 
   function classCreated(saved) {
@@ -75,7 +75,7 @@ export default function ClassesTablePage({ filters, onFiltersChange, onChange })
                   <td>
                     {c.weapon && <span className={`tag weapon-${c.weapon}`}>{CLASS_WEAPONS[c.weapon]}</span>}
                   </td>
-                  {me.role !== 'coach' && <td>{c.coach}</td>}
+                  {me.role !== 'coach' && <td>{c.coach_name}</td>}
                   <td>{c.location}</td>
                   <td>
                     {me.role === 'member'
@@ -95,9 +95,7 @@ export default function ClassesTablePage({ filters, onFiltersChange, onChange })
     <div className="calendar-page">
       <div className="page-scroll">
         <div className="page">
-          <h1 className="page-title">
-            <span className="page-icon">📋</span>{isManager ? 'All classes' : 'My classes'}
-          </h1>
+          <ClassesHeader />
           {isManager && (
             <div className="toolbar">
               <ClassFilters filters={filters} onChange={onFiltersChange} />

@@ -66,6 +66,18 @@ export default function AttendancePanel({ classId, onChange, onClose }) {
     onChange()
   }
 
+  // Members only see their own row, so it's the first one if they're on the class.
+  async function setEnrolled(enrolled) {
+    setMessage('')
+    try {
+      await api(`classes/${classId}/${enrolled ? 'enrol' : 'unenrol'}/`, { method: 'POST' })
+      await load()
+      onChange()
+    } catch (err) {
+      setMessage(err.data?.detail ?? err.message)
+    }
+  }
+
   async function deleteClass() {
     if (!window.confirm(`Delete ${fencingClass.name}?`)) return
     await api(`classes/${classId}/`, { method: 'DELETE' })
@@ -110,11 +122,22 @@ export default function AttendancePanel({ classId, onChange, onClose }) {
       <p className="meta">
         {formatTime(fencingClass.start)} – {formatTime(fencingClass.end)}
         {fencingClass.weapon && ` · ${CLASS_WEAPONS[fencingClass.weapon]}`}
-        {fencingClass.coach && ` · ${fencingClass.coach}`}
+        {fencingClass.coach_name && ` · ${fencingClass.coach_name}`}
         {fencingClass.location && ` · ${fencingClass.location}`}
       </p>
       {isManager && (
         <button className="button" onClick={() => setEditing(true)}>Edit class</button>
+      )}
+      {me.role === 'member' && new Date(fencingClass.start) > new Date() && (
+        <>
+          {rows.length === 0 && (
+            <button className="button primary" onClick={() => setEnrolled(true)}>Enrol</button>
+          )}
+          {rows[0]?.status === 'enrolled' && (
+            <button className="button" onClick={() => setEnrolled(false)}>Cancel enrolment</button>
+          )}
+          {message && <p className="meta">{message}</p>}
+        </>
       )}
       {editing && (
         <ClassForm
@@ -146,7 +169,7 @@ export default function AttendancePanel({ classId, onChange, onClose }) {
         {rows.map((row) => (
           <li key={row.id}>
             {isManager
-              ? <Link className="row-link" to={`/members/${row.member}`}>{row.member_name}</Link>
+              ? <Link className="row-link" to={`/members?member=${row.member}`}>{row.member_name}</Link>
               : <span>{row.member_name}</span>}
             <StatusSelect
               value={row.status}

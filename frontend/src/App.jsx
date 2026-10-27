@@ -1,14 +1,18 @@
-import { useCallback, useEffect, useState } from 'react'
-import { NavLink, Route, Routes, useLocation, useNavigate } from 'react-router'
+import { useEffect, useState } from 'react'
+import { Navigate, NavLink, Route, Routes, useLocation, useNavigate, useParams } from 'react-router'
 import { api } from './api'
 import { MeContext } from './auth'
+import BookPage from './BookPage'
 import CalendarPage from './CalendarPage'
 import { NO_FILTERS } from './classes'
 import ClassesTablePage from './ClassesTablePage'
+import CoachesPage from './CoachesPage'
+import CoachPage from './CoachPage'
+import LessonsPage from './LessonsPage'
 import LoginPage from './LoginPage'
-import MemberPage from './MemberPage'
+import { MemberProfilePage } from './MemberPanel'
 import MembersPage from './MembersPage'
-import UnmarkedPage from './UnmarkedPage'
+import SetPasswordPage from './SetPasswordPage'
 import './App.css'
 
 const ROLE_LABELS = { manager: 'Manager', coach: 'Coach', member: 'Member' }
@@ -22,33 +26,34 @@ export default function App() {
   }, [])
 
   if (me === undefined) return <p className="page muted">Loading…</p>
-  if (me === null) return <LoginPage onLogin={setMe} />
 
   return (
-    <MeContext.Provider value={me}>
-      <Layout me={me} onLogout={() => setMe(null)} />
-    </MeContext.Provider>
+    <Routes>
+      {/* Links in invite and reset emails work whether or not someone is logged in. */}
+      <Route path="/set-password/:uid/:token" element={<SetPasswordPage onLogin={setMe} />} />
+      <Route
+        path="*"
+        element={
+          me === null ? (
+            <LoginPage onLogin={setMe} />
+          ) : (
+            <MeContext.Provider value={me}>
+              <Layout me={me} onLogout={() => setMe(null)} />
+            </MeContext.Provider>
+          )
+        }
+      />
+    </Routes>
   )
 }
 
 function Layout({ me, onLogout }) {
-  const location = useLocation()
   const navigate = useNavigate()
-  const [unmarkedCount, setUnmarkedCount] = useState(0)
+  const { pathname } = useLocation()
   // Shared by the calendar and the table, so switching views keeps them.
   const [filters, setFilters] = useState(NO_FILTERS)
   const isManager = me.role === 'manager'
-
-  const refreshCount = useCallback(() => {
-    if (!isManager) return
-    api('attendance/unmarked/')
-      .then((rows) => setUnmarkedCount(rows.length))
-      .catch(() => setUnmarkedCount(0))
-  }, [isManager])
-
-  useEffect(() => {
-    refreshCount()
-  }, [location.pathname, refreshCount])
+  const isMember = me.role === 'member'
 
   async function logout() {
     await api('logout/', { method: 'POST' })
@@ -56,7 +61,7 @@ function Layout({ me, onLogout }) {
     onLogout()
   }
 
-  const viewProps = { filters, onFiltersChange: setFilters, onChange: refreshCount }
+  const viewProps = { filters, onFiltersChange: setFilters }
 
   return (
     <div className="app">
@@ -65,22 +70,37 @@ function Layout({ me, onLogout }) {
           <span className="workspace-icon">🤺</span>
           Fencing Club
         </div>
-        <NavLink to="/" end className="nav-item">
-          <span className="nav-icon">📅</span>{isManager ? 'Calendar' : 'My calendar'}
+        {/* One item for both views; the page itself switches between them. */}
+        <NavLink
+          to="/"
+          className={`nav-item ${pathname === '/' || pathname === '/table' ? 'active' : ''}`}
+        >
+          <span className="nav-icon">📅</span>{isManager ? 'Classes' : 'My classes'}
         </NavLink>
-        <NavLink to="/table" className="nav-item">
-          <span className="nav-icon">📋</span>{isManager ? 'All classes' : 'My classes'}
-        </NavLink>
+        {isMember && (
+          <NavLink to="/book" className="nav-item">
+            <span className="nav-icon">➕</span>Book a class
+          </NavLink>
+        )}
+        {isMember && (
+          <NavLink to="/lessons" className="nav-item">
+            <span className="nav-icon">🎯</span>Private lessons
+          </NavLink>
+        )}
+        {isMember && (
+          <NavLink to="/profile" className="nav-item">
+            <span className="nav-icon">👤</span>My profile
+          </NavLink>
+        )}
         {isManager && (
-          <>
-            <NavLink to="/unmarked" className="nav-item">
-              <span className="nav-icon">✅</span>Needs marking
-              {unmarkedCount > 0 && <span className="badge">{unmarkedCount}</span>}
-            </NavLink>
-            <NavLink to="/members" className="nav-item">
-              <span className="nav-icon">👥</span>Members
-            </NavLink>
-          </>
+          <NavLink to="/members" className="nav-item">
+            <span className="nav-icon">👥</span>Members
+          </NavLink>
+        )}
+        {isManager && (
+          <NavLink to="/coaches" className="nav-item">
+            <span className="nav-icon">🧑‍🏫</span>Coaches
+          </NavLink>
         )}
         <div className="account">
           <div className="account-name">
@@ -96,15 +116,29 @@ function Layout({ me, onLogout }) {
         <Routes>
           <Route path="/" element={<CalendarPage {...viewProps} />} />
           <Route path="/table" element={<ClassesTablePage {...viewProps} />} />
+          {isMember && (
+            <>
+              <Route path="/book" element={<BookPage />} />
+              <Route path="/lessons" element={<LessonsPage />} />
+              <Route path="/profile" element={<MemberProfilePage id={me.member} />} />
+            </>
+          )}
           {isManager && (
             <>
-              <Route path="/unmarked" element={<UnmarkedPage onChange={refreshCount} />} />
               <Route path="/members" element={<MembersPage />} />
-              <Route path="/members/:id" element={<MemberPage onChange={refreshCount} />} />
+              <Route path="/members/:id" element={<OldMemberLink />} />
+              <Route path="/coaches" element={<CoachesPage />} />
+              <Route path="/coaches/:id" element={<CoachPage />} />
             </>
           )}
         </Routes>
       </main>
     </div>
   )
+}
+
+// Member pages became a side peek on /members. Keeps old bookmarks working.
+function OldMemberLink() {
+  const { id } = useParams()
+  return <Navigate to={`/members?member=${id}`} replace />
 }

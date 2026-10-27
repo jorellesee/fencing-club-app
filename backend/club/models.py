@@ -14,9 +14,27 @@ class Member(models.Model):
     phone = models.CharField(max_length=30, blank=True)
     weapon = models.CharField(max_length=10, choices=Weapon.choices, blank=True)
     active = models.BooleanField(default=True)
+    primary_coach = models.ForeignKey(
+        'Coach', on_delete=models.SET_NULL, null=True, blank=True, related_name='members'
+    )
 
     def __str__(self):
         return self.name
+
+class Coach(models.Model):
+    name = models.CharField(max_length=100, unique=True)
+    email = models.EmailField(blank=True)
+    phone = models.CharField(max_length=30, blank=True)
+    weapon = models.CharField(max_length=10, choices=Member.Weapon.choices, blank=True)
+    active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['name']
+        verbose_name_plural = 'coaches'
+
+    def __str__(self):
+        return self.name
+
 
 class FencingClass(models.Model):
     class Weapon(models.TextChoices):
@@ -28,7 +46,9 @@ class FencingClass(models.Model):
     name = models.CharField(max_length=100)
     start = models.DateTimeField()
     end = models.DateTimeField()
-    coach = models.CharField(max_length=100, blank=True)
+    coach = models.ForeignKey(
+        Coach, on_delete=models.SET_NULL, null=True, blank=True, related_name='classes'
+    )
     location = models.CharField(max_length=100, blank=True)
     weapon = models.CharField(max_length=10, choices=Weapon.choices, blank=True)
     capacity = models.PositiveIntegerField(null=True, blank=True)
@@ -84,16 +104,45 @@ class Profile(models.Model):
         Member, on_delete=models.SET_NULL, null=True, blank=True, related_name='profile',
         help_text='Members only: whose schedule and history this login sees.',
     )
-    coach_name = models.CharField(
-        max_length=100, blank=True,
-        help_text="Coaches only: exactly as typed in a class's coach field.",
+    coach = models.OneToOneField(
+        Coach, on_delete=models.SET_NULL, null=True, blank=True, related_name='profile',
+        help_text='Coaches only: whose classes this login can mark.',
     )
 
     def clean(self):
         if self.role == self.Role.MEMBER and not self.member:
             raise ValidationError({'member': 'Pick the member this login belongs to.'})
-        if self.role == self.Role.COACH and not self.coach_name:
-            raise ValidationError({'coach_name': 'Enter the coach name used on classes.'})
+        if self.role == self.Role.COACH and not self.coach:
+            raise ValidationError({'coach': 'Pick the coach this login belongs to.'})
 
     def __str__(self):
         return f'{self.user} ({self.get_role_display()})'
+
+
+class LessonRequest(models.Model):
+    """A member asking one of their coaches for a private lesson. Accepting it
+    makes a one-person FencingClass, so it shows on calendars and can be marked."""
+
+    class Status(models.TextChoices):
+        PENDING = 'pending', 'Pending'
+        ACCEPTED = 'accepted', 'Accepted'
+        DECLINED = 'declined', 'Declined'
+        CANCELLED = 'cancelled', 'Cancelled'
+
+    member = models.ForeignKey(Member, on_delete=models.CASCADE, related_name='lesson_requests')
+    coach = models.ForeignKey(Coach, on_delete=models.CASCADE, related_name='lesson_requests')
+    start = models.DateTimeField()
+    end = models.DateTimeField()
+    note = models.TextField(blank=True)
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
+    fencing_class = models.OneToOneField(
+        FencingClass, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='lesson_request',
+    )
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['start']
+
+    def __str__(self):
+        return f'{self.member} with {self.coach} ({self.start:%a %d %b %H:%M}): {self.status}'

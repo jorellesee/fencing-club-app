@@ -159,6 +159,24 @@ REST_FRAMEWORK = {
     ],
 }
 
+# Invite and password reset emails link here: the Vite dev server locally, the site online.
+FRONTEND_URL = f'https://{SITE_HOST}' if SITE_HOST else 'http://localhost:5173'
+
+# Locally, emails print in the runserver terminal. Online, set EMAIL_HOST and friends,
+# e.g. smtp.gmail.com with a Gmail app password.
+if os.environ.get('EMAIL_HOST'):
+    EMAIL_HOST = os.environ['EMAIL_HOST']
+    EMAIL_PORT = int(os.environ.get('EMAIL_PORT', 587))
+    EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
+    EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
+    EMAIL_USE_TLS = True
+else:
+    EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'Fencing Club <noreply@localhost>')
+
+# Invite and reset links stop working after this many seconds (Django's default is 3 days).
+PASSWORD_RESET_TIMEOUT = 60 * 60 * 24 * 7
+
 if not DEBUG:
     # Render serves the site over HTTPS and tells Django so with this header.
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
