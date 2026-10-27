@@ -18,8 +18,10 @@ class AttendanceInline(admin.TabularInline):
 
 @admin.register(FencingClass)
 class FencingClassAdmin(admin.ModelAdmin):
-    list_display = ['name', 'start', 'end', 'coach', 'location', 'capacity', 'present_count']
-    list_filter = ['coach', 'location']
+    list_display = [
+        'name', 'start', 'end', 'coach', 'location', 'weapon', 'capacity', 'present_count',
+    ]
+    list_filter = ['coach', 'location', 'weapon']
     search_fields = ['name', 'coach', 'location']
     date_hierarchy = 'start'
     inlines = [AttendanceInline]

@@ -1,4 +1,5 @@
 export const WEAPONS = { foil: 'Foil', epee: 'Épée', sabre: 'Sabre' }
+export const CLASS_WEAPONS = { ...WEAPONS, mixed: 'Mixed' }
 
 export function formatDateTime(iso) {
   return new Date(iso).toLocaleString([], {

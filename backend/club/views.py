@@ -69,6 +69,9 @@ class FencingClassViewSet(viewsets.ModelViewSet):
         location = self.request.query_params.get('location')
         if location:
             queryset = queryset.filter(location=location)
+        weapon = self.request.query_params.get('weapon')
+        if weapon:
+            queryset = queryset.filter(weapon=weapon)
         member = self.request.query_params.get('member')
         if member:
             queryset = queryset.filter(attendance__member=member)
@@ -124,6 +127,7 @@ class FencingClassViewSet(viewsets.ModelViewSet):
                     end=fencing_class.end + timedelta(weeks=week),
                     coach=fencing_class.coach,
                     location=fencing_class.location,
+                    weapon=fencing_class.weapon,
                     capacity=fencing_class.capacity,
                     notes=fencing_class.notes,
                     series=fencing_class.series,
@@ -135,6 +139,22 @@ class FencingClassViewSet(viewsets.ModelViewSet):
                 created += 1
                 week += 1
         return Response({'created': created}, status=status.HTTP_201_CREATED)
+
+    # Times stay per class, and notes are usually about one week.
+    SERIES_FIELDS = ['name', 'coach', 'location', 'weapon', 'capacity']
+
+    @action(detail=True, methods=['post'], url_path='update-following')
+    def update_following(self, request, pk=None):
+        fencing_class = self.get_object()
+        if fencing_class.series is None:
+            raise ValidationError({'detail': 'This class is not part of a series.'})
+        data = {key: value for key, value in request.data.items() if key in self.SERIES_FIELDS}
+        serializer = self.get_serializer(fencing_class, data=data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        following = FencingClass.objects.filter(
+            series=fencing_class.series, start__gte=fencing_class.start
+        )
+        return Response({'updated': following.update(**serializer.validated_data)})
 
     @action(detail=True, methods=['post'], url_path='delete-following')
     def delete_following(self, request, pk=None):

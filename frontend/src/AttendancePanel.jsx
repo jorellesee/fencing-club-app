@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 import { api } from './api'
 import { canEdit, useMe } from './auth'
+import ClassForm from './ClassForm'
+import { CLASS_WEAPONS } from './format'
 import StatusSelect from './StatusSelect'
 
 function formatTime(iso) {
@@ -19,6 +21,7 @@ export default function AttendancePanel({ classId, onChange, onClose }) {
   const [until, setUntil] = useState('')
   const [message, setMessage] = useState('')
   const [notes, setNotes] = useState('')
+  const [editing, setEditing] = useState(false)
 
   async function load() {
     const [classData, attendance, allMembers] = await Promise.all([
@@ -106,9 +109,24 @@ export default function AttendancePanel({ classId, onChange, onClose }) {
       <h2>{fencingClass.name}</h2>
       <p className="meta">
         {formatTime(fencingClass.start)} – {formatTime(fencingClass.end)}
+        {fencingClass.weapon && ` · ${CLASS_WEAPONS[fencingClass.weapon]}`}
         {fencingClass.coach && ` · ${fencingClass.coach}`}
         {fencingClass.location && ` · ${fencingClass.location}`}
       </p>
+      {isManager && (
+        <button className="button" onClick={() => setEditing(true)}>Edit class</button>
+      )}
+      {editing && (
+        <ClassForm
+          fencingClass={fencingClass}
+          onSaved={async () => {
+            setEditing(false)
+            await load()
+            onChange()
+          }}
+          onClose={() => setEditing(false)}
+        />
+      )}
 
       <h3>Notes</h3>
       {editable ? (

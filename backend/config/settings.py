@@ -37,11 +37,12 @@ else:
 ALLOWED_HOSTS = ['localhost', '127.0.0.1']
 CSRF_TRUSTED_ORIGINS = ['http://localhost:5173']
 
-# Render sets this to the app's address, e.g. fencing-club.onrender.com.
-RENDER_HOST = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
-if RENDER_HOST:
-    ALLOWED_HOSTS.append(RENDER_HOST)
-    CSRF_TRUSTED_ORIGINS.append(f'https://{RENDER_HOST}')
+# The app's public address, e.g. jorellesee.pythonanywhere.com.
+# Render sets RENDER_EXTERNAL_HOSTNAME itself; elsewhere, set SITE_HOST.
+SITE_HOST = os.environ.get('SITE_HOST') or os.environ.get('RENDER_EXTERNAL_HOSTNAME')
+if SITE_HOST:
+    ALLOWED_HOSTS.append(SITE_HOST)
+    CSRF_TRUSTED_ORIGINS.append(f'https://{SITE_HOST}')
 
 
 # Application definition

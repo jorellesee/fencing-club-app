@@ -23,7 +23,7 @@ class FencingClassSerializer(serializers.ModelSerializer):
     class Meta:
         model = FencingClass
         fields = [
-            'id', 'name', 'start', 'end', 'coach', 'location', 'capacity', 'notes',
+            'id', 'name', 'start', 'end', 'coach', 'location', 'weapon', 'capacity', 'notes',
             'member_count', 'present_count', 'series',
         ]
         read_only_fields = ['series']

@@ -162,7 +162,7 @@ class RepeatTests(APITestCase):
         self.alex = Member.objects.create(name='Alex Tan')
         self.junior = FencingClass.objects.create(
             name='Junior Foil', start=at(20, 17), end=at(20, 18), coach='Coach Lim',
-            location='Hall A',
+            location='Hall A', weapon='foil',
         )
         Attendance.objects.create(fencing_class=self.junior, member=self.alex, status='present')
 
@@ -187,6 +187,7 @@ class RepeatTests(APITestCase):
             self.assertEqual(copy.series, self.junior.series)
             self.assertEqual(copy.coach, 'Coach Lim')
             self.assertEqual(copy.location, 'Hall A')
+            self.assertEqual(copy.weapon, 'foil')
 
     def test_copies_enrol_the_same_members(self):
         self.repeat(self.junior, '2026-10-27')
@@ -208,6 +209,26 @@ class RepeatTests(APITestCase):
 
         self.assertEqual(response.status_code, 400)
 
+    def test_update_following_changes_this_and_later_classes_only(self):
+        self.repeat(self.junior, '2026-11-10')
+        series = list(FencingClass.objects.order_by('start'))
+        response = self.client.post(
+            f'/api/classes/{series[1].id}/update-following/',
+            {'name': 'Tuesday Foil HA Class', 'start': at(27, 9).isoformat()},
+        )
+        self.assertEqual(response.data, {'updated': 3})
+        names = list(FencingClass.objects.order_by('start').values_list('name', flat=True))
+        self.assertEqual(names, ['Junior Foil'] + ['Tuesday Foil HA Class'] * 3)
+        series[1].refresh_from_db()
+        self.assertEqual(series[1].start, at(27, 17))  # times are never copied
+
+    def test_update_following_validates(self):
+        self.repeat(self.junior, '2026-11-03')
+        response = self.client.post(
+            f'/api/classes/{self.junior.id}/update-following/', {'weapon': 'lightsaber'}
+        )
+        self.assertEqual(response.status_code, 400)
+
     def test_delete_following_keeps_earlier_classes(self):
         self.repeat(self.junior, '2026-11-10')
         second = FencingClass.objects.get(start=at(27, 17))
@@ -226,7 +247,7 @@ class FilterTests(APITestCase):
         self.sam = Member.objects.create(name='Sam Lee')
         self.junior = FencingClass.objects.create(
             name='Junior Foil', start=at(20, 17), end=at(20, 18), coach='Coach Lim',
-            location='Hall A',
+            location='Hall A', weapon='foil',
         )
         self.senior = FencingClass.objects.create(
             name='Senior Epee', start=at(21, 19), end=at(21, 21), coach='Coach Wong',
@@ -267,6 +288,10 @@ class FilterTests(APITestCase):
 
     def test_filters_combine(self):
         response = self.client.get('/api/classes/', {'location': 'Hall A', 'member': self.sam.id})
+        self.assertEqual(self.names(response), ['Junior Foil'])
+
+    def test_weapon_filter(self):
+        response = self.client.get('/api/classes/', {'weapon': 'foil'})
         self.assertEqual(self.names(response), ['Junior Foil'])
 
     def test_locations_lists_each_name_once(self):

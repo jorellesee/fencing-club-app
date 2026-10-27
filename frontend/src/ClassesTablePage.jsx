@@ -5,7 +5,7 @@ import { useMe } from './auth'
 import ClassFilters from './ClassFilters'
 import ClassForm from './ClassForm'
 import { attendanceCount, classParams } from './classes'
-import { formatDateTime } from './format'
+import { CLASS_WEAPONS, formatDateTime } from './format'
 import StatusSelect from './StatusSelect'
 
 // Members also get their own status for each class, keyed by class id.
@@ -57,6 +57,7 @@ export default function ClassesTablePage({ filters, onFiltersChange, onChange })
               <tr>
                 <th>When</th>
                 <th>Class</th>
+                <th>Weapon</th>
                 {me.role !== 'coach' && <th>Coach</th>}
                 <th>Location</th>
                 <th>{me.role === 'member' ? 'My status' : 'Present'}</th>
@@ -71,6 +72,9 @@ export default function ClassesTablePage({ filters, onFiltersChange, onChange })
                 >
                   <td className="muted">{formatDateTime(c.start)}</td>
                   <td className="strong">{c.name}</td>
+                  <td>
+                    {c.weapon && <span className={`tag weapon-${c.weapon}`}>{CLASS_WEAPONS[c.weapon]}</span>}
+                  </td>
                   {me.role !== 'coach' && <td>{c.coach}</td>}
                   <td>{c.location}</td>
                   <td>

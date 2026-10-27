@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from './api'
 import { NO_FILTERS } from './classes'
+import { CLASS_WEAPONS } from './format'
 
 export default function ClassFilters({ filters, onChange }) {
   const [coaches, setCoaches] = useState([])
@@ -37,6 +38,12 @@ export default function ClassFilters({ filters, onChange }) {
         <option value="">All locations</option>
         {locations.map((name) => (
           <option key={name} value={name}>{name}</option>
+        ))}
+      </select>
+      <select className="filter" value={filters.weapon} onChange={(e) => set('weapon', e.target.value)}>
+        <option value="">All weapons</option>
+        {Object.entries(CLASS_WEAPONS).map(([value, label]) => (
+          <option key={value} value={value}>{label}</option>
         ))}
       </select>
       {active && (

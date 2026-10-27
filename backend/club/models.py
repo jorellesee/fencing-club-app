@@ -19,11 +19,18 @@ class Member(models.Model):
         return self.name
 
 class FencingClass(models.Model):
+    class Weapon(models.TextChoices):
+        FOIL = 'foil', 'Foil'
+        EPEE = 'epee', 'Épée'
+        SABRE = 'sabre', 'Sabre'
+        MIXED = 'mixed', 'Mixed'
+
     name = models.CharField(max_length=100)
     start = models.DateTimeField()
     end = models.DateTimeField()
     coach = models.CharField(max_length=100, blank=True)
     location = models.CharField(max_length=100, blank=True)
+    weapon = models.CharField(max_length=10, choices=Weapon.choices, blank=True)
     capacity = models.PositiveIntegerField(null=True, blank=True)
     notes = models.TextField(blank=True)
     series = models.UUIDField(null=True, blank=True, db_index=True)

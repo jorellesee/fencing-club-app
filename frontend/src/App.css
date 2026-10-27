@@ -389,6 +389,7 @@ input {
 .weapon-foil { background: var(--tag-blue-bg); color: var(--tag-blue-text); }
 .weapon-epee { background: var(--tag-purple-bg); color: var(--tag-purple-text); }
 .weapon-sabre { background: var(--tag-orange-bg); color: var(--tag-orange-text); }
+.weapon-mixed { background: var(--tag-gray-bg); color: var(--tag-gray-text); }
 
 /* Attendance rate */
 
@@ -559,6 +560,18 @@ input[type="date"] {
 
 .table tbody tr.selected {
   background: var(--active);
+}
+
+/* A text box with a button on its right, e.g. Name + Generate */
+
+.input-with-button {
+  display: flex;
+  gap: 8px;
+}
+
+.input-with-button input {
+  flex: 1;
+  min-width: 0;
 }
 
 /* Filters on the left, the New button on the right */

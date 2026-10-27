@@ -15,6 +15,7 @@ How to build the manager-only fencing club app: a Django backend with a REST API
 | [11. Calendar and table views](#lesson-11-a-calendar-and-a-table-for-every-role) | Two views per role, and class locations | Shared query helpers, lifting state up |
 | [12. Creating in the app](#lesson-12-creating-classes-and-members-in-the-app) | New class and New member forms | Controlled forms, dates and time zones, server-side validation |
 | [13. Going online](#lesson-13-putting-it-online-with-render) | The app on Render with a persistent disk | Environment variables, gunicorn, WhiteNoise, serving React from Django |
+| [14. Editing and naming classes](#lesson-14-editing-classes-and-names-that-write-themselves) | Edit form, Generate name, class weapon, series edits | Create/edit in one form, `.update()`, lazy `useState` |
 
 Versions used: Python 3.10, Django 5.2, Django REST Framework 3.18, Node 24+, React 19, FullCalendar 7.
 
@@ -2417,6 +2418,256 @@ Open http://localhost:8123. Pages and the admin should load. Logging in won't wo
 
 ---
 
+# Lesson 14: Editing classes, and names that write themselves
+
+**Goal:** managers can edit a class from the app, including renaming it, and a **Generate** button names a class from its details, e.g. *Monday Sabre BT Class*. Classes also get a **weapon**. Claude built this one; read through the files below to learn from it.
+
+## What was added
+
+| Where | What |
+| --- | --- |
+| `club/models.py` + migration `0007` | `FencingClass.weapon`: Foil, Épée, Sabre or Mixed (optional) |
+| `club/views.py` | `?weapon=` filter, `repeat` copies the weapon, and a new `update-following` action |
+| `club/admin.py`, `club/serializers.py` | Weapon shown and filterable in the admin, and returned by the API |
+| `club/tests.py` | Weapon filter, `update-following` only touches this and later classes and never times, and it validates (54 tests) |
+| `classes.js` | `locationCode()` and `generateName()` |
+| `ClassForm.jsx` | Now edits as well as creates. Adds Weapon, the **Generate** button, and the series checkbox |
+| `AttendancePanel.jsx` | An **Edit class** button for managers. Shows the weapon |
+| `ClassFilters.jsx`, `ClassesTablePage.jsx` | A weapon filter and a Weapon column |
+
+## Key ideas
+
+### How a name is generated
+
+```js
+export function generateName({ date, weapon, location }) {
+  const weekday = new Date(`${date}T00:00`).toLocaleDateString('en-US', { weekday: 'long' })
+  return [weekday, CLASS_WEAPONS[weapon], location && locationCode(location), 'Class']
+    .filter(Boolean)
+    .join(' ')
+}
+```
+
+- **Weekday** comes from the date in the form, read as local time.
+- **Location code** is the initials of a multi-word location ("Bukit Timah" → "BT", "Hall A" → "HA"). A one-word location stays whole ("Clementi").
+- **`.filter(Boolean)`** drops anything not filled in, so a class with no weapon becomes *Tuesday Clementi Class*.
+
+The button only fills in the Name box. You can still edit it, or type a name of your own. The name is saved like any other text, so changing the weapon later doesn't rename the class unless you click Generate again.
+
+### One form for create and edit
+
+`ClassForm` checks whether it was given a `fencingClass`:
+
+- **No class:** empty form, `POST /api/classes/`, button says *Create class*.
+- **A class:** form filled from it, `PATCH /api/classes/<id>/`, button says *Save*.
+
+`useState(() => initialForm(...))` passes a *function*, so the starting values are worked out once, when the form opens, not on every keystroke.
+
+### Changing a whole series
+
+Each week of a series is its own row (Lesson 7). The new action changes this class and every later one in its series:
+
+```python
+following = FencingClass.objects.filter(series=fencing_class.series, start__gte=fencing_class.start)
+following.update(**serializer.validated_data)
+```
+
+- **Only some fields are copied** (`SERIES_FIELDS`): name, coach, location, weapon, capacity. Times would need shifting week by week, and notes are usually about one session, so both stay per class. Anything else in the request is simply ignored.
+- **The serializer still validates** the data with `partial=True`, so a bad weapon gives a 400 before anything changes.
+- **`.update()`** changes every matching row in one SQL query, without loading them into Python.
+
+In the form, the checkbox only appears for classes in a series. Saving first PATCHes this class with everything, including times and notes. If the box is ticked, it then calls `update-following` with the shared fields.
+
+## Try it
+
+1. Run `python manage.py migrate`.
+2. As a manager, click a class, then **Edit class**. Change the name and click **Save**. The calendar and table update.
+3. Set the weapon and location and click **Generate**. You get something like *Monday Sabre BT Class*. Change a word and save.
+4. Open a class in a weekly series, rename it, tick **Also change … all following classes**, and save. Later weeks are renamed; earlier ones aren't.
+5. In **All classes**, filter by weapon.
+
+---
+
+# Lesson 15: Putting it online for free with PythonAnywhere
+
+**Goal:** run the app on the internet at no cost. Render's disks need a paid plan, and without a disk Render wipes `db.sqlite3` on every deploy. On PythonAnywhere's free tier your files are permanent, so SQLite stays where it is. Django still serves the built React app through WhiteNoise, as in Lesson 13. You make one small settings change, then set everything up on PythonAnywhere.
+
+## Key ideas
+
+### What's different from Render
+
+| | Render (Lesson 13) | PythonAnywhere |
+| --- | --- | --- |
+| Database | SQLite on a paid disk | SQLite in your home folder, which is permanent |
+| Building React | Render runs `npm run build` | You build on your Mac and upload `dist/` |
+| Environment variables | Render's form | You set them in the WSGI file, and in the virtualenv for the console |
+| Web server | gunicorn, started by your start command | PythonAnywhere's server imports `application` from the WSGI file |
+| Deploying | Push to GitHub | `git pull` in a console, then **Reload** |
+
+### The WSGI file is the entry point
+
+A WSGI server doesn't run `manage.py`. It imports one Python file and looks for a variable called `application`, which is what your [config/wsgi.py](backend/config/wsgi.py) provides. PythonAnywhere keeps its own WSGI file outside your repo (in `/var/www/`), which makes it a safe place for the secret key: it never goes into git.
+
+### The console needs the same settings
+
+`manage.py` commands you type in a console don't go through the WSGI file. If you run `collectstatic` without `DJANGO_DEBUG=false`, it runs with development settings, and you can end up with a different set of static files from the one the live site expects. To avoid that, you set the same variables in the virtualenv's `postactivate` script, which runs every time you type `workon fencing`.
+
+### Free tier limits
+
+- Your address is `https://<username>.pythonanywhere.com`. Custom domains need a paid plan.
+- **Every 3 months, log in and click "Run until 3 months from today"** on the Web tab, or the site gets switched off.
+- Outbound internet is limited to an allowlist. GitHub and PyPI are on it, so `git` and `pip` work.
+
+## Step 1: make the allowed host configurable
+
+Right now [settings.py](backend/config/settings.py) only adds the site's address when `RENDER_EXTERNAL_HOSTNAME` is set, and PythonAnywhere doesn't set it. Change the block so it reads a variable of your own, `SITE_HOST`, and falls back to Render's:
+
+```python
+# The app's public address, e.g. jorellesee.pythonanywhere.com.
+# Render sets RENDER_EXTERNAL_HOSTNAME itself; elsewhere, set SITE_HOST.
+SITE_HOST = os.environ.get('SITE_HOST') or os.environ.get('RENDER_EXTERNAL_HOSTNAME')
+if SITE_HOST:
+    ALLOWED_HOSTS.append(SITE_HOST)
+    CSRF_TRUSTED_ORIGINS.append(f'https://{SITE_HOST}')
+```
+
+Why both settings?
+- `ALLOWED_HOSTS`: Django rejects requests whose `Host` header isn't in this list, so nobody can point another domain at your app.
+- `CSRF_TRUSTED_ORIGINS`: Django rejects unsafe requests (`POST`, `PATCH`, `DELETE`) from origins it doesn't trust, and the origin includes `https://`.
+
+Run the tests, then commit and push everything, including migration `0007`:
+
+```bash
+cd backend && python manage.py test
+cd .. && git add -A && git commit -m "Lesson 14 and configurable site host" && git push
+```
+
+## Step 2: build React on your Mac
+
+```bash
+cd frontend && npm run build
+zip -r dist.zip dist
+```
+
+`dist/` is in `frontend/.gitignore`, so it doesn't reach PythonAnywhere through git. You upload it instead.
+
+## Step 3: get the code onto PythonAnywhere
+
+1. Sign up at [pythonanywhere.com](https://www.pythonanywhere.com) (a free "Beginner" account). Your username becomes your web address.
+2. Open **Consoles → Bash**:
+
+    ```bash
+    git clone https://github.com/jorellesee/fencing-club-app.git
+    mkvirtualenv fencing --python=python3.10
+    cd ~/fencing-club-app/backend
+    pip install -r requirements.txt
+    ```
+
+    If the repo is private, GitHub asks for a password. Use a [personal access token](https://github.com/settings/tokens) (read-only access to this repo), not your GitHub password. Python 3.10 matches your Mac. If PythonAnywhere doesn't offer it, use `python3.12`; Django 5.2 supports both.
+
+3. **Files** tab: go to `/home/<username>/fencing-club-app/frontend/`, upload `dist.zip`, then in the console:
+
+    ```bash
+    cd ~/fencing-club-app/frontend && unzip dist.zip && rm dist.zip
+    ```
+
+## Step 4: set the environment variables for the console
+
+Make a secret key (once) and copy it:
+
+```bash
+python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
+```
+
+Open `~/.virtualenvs/fencing/bin/postactivate` (in the Files tab or with `nano`) and add:
+
+```bash
+export DJANGO_DEBUG=false
+export DJANGO_SECRET_KEY='paste-the-key-here'
+export SITE_HOST=<username>.pythonanywhere.com
+```
+
+Then reload the environment and prepare the database and static files:
+
+```bash
+deactivate && workon fencing
+cd ~/fencing-club-app/backend
+python manage.py migrate
+python manage.py collectstatic --noinput
+python manage.py createsuperuser
+```
+
+`db.sqlite3` is in `.gitignore`, so this is a fresh, empty database. If you'd rather keep the data from your Mac, upload your local `backend/db.sqlite3` to the same folder in the Files tab *before* running `migrate`.
+
+## Step 5: create the web app
+
+1. **Web** tab → **Add a new web app** → **Manual configuration** (not "Django", which would start a new project) → the same Python version as your virtualenv.
+2. On the web app's page, set:
+
+    | Field | Value |
+    | --- | --- |
+    | Source code | `/home/<username>/fencing-club-app/backend` |
+    | Working directory | `/home/<username>/fencing-club-app/backend` |
+    | Virtualenv | `/home/<username>/.virtualenvs/fencing` |
+    | Force HTTPS | On |
+
+3. Click the **WSGI configuration file** link, delete everything in it, and write:
+
+    ```python
+    import os
+    import sys
+
+    path = '/home/<username>/fencing-club-app/backend'
+    if path not in sys.path:
+        sys.path.insert(0, path)
+
+    os.environ['DJANGO_SETTINGS_MODULE'] = 'config.settings'
+    os.environ['DJANGO_DEBUG'] = 'false'
+    os.environ['DJANGO_SECRET_KEY'] = 'paste-the-same-key-here'
+    os.environ['SITE_HOST'] = '<username>.pythonanywhere.com'
+
+    from django.core.wsgi import get_wsgi_application
+    application = get_wsgi_application()
+    ```
+
+    Compare this with `config/wsgi.py`. It does the same job, plus two things that file doesn't need locally: putting `backend/` on Python's import path so `import config` works, and setting the variables.
+
+4. Don't add any entries under **Static files**. WhiteNoise already serves `/static/` and React's files from inside Django.
+5. Click **Reload**, then open `https://<username>.pythonanywhere.com` and log in.
+
+**Force HTTPS** matters because of Lesson 13's secure-cookie settings: with debug off, the browser only sends the login cookie over HTTPS.
+
+## If something's wrong
+
+The Web tab links to an **error log** and a **server log**. Check the error log first.
+
+| Symptom | Likely cause |
+| --- | --- |
+| "Bad Request (400)" | `SITE_HOST` is missing or misspelled in the WSGI file |
+| `KeyError: 'DJANGO_SECRET_KEY'` | The key isn't set in the WSGI file |
+| "No React build" | `frontend/dist/index.html` doesn't exist. Check where the zip unpacked |
+| Page loads with no styles, or a 500 mentioning the manifest | `collectstatic` wasn't run, or was run without `workon fencing` |
+| "CSRF verification failed" when saving | `SITE_HOST` doesn't match the address in the browser, or Force HTTPS is off |
+| `no such table` | `migrate` wasn't run against this database |
+
+## Updating the site later
+
+On your Mac, push your changes (and rebuild and zip `dist/` if the frontend changed). Then on PythonAnywhere:
+
+```bash
+workon fencing
+cd ~/fencing-club-app && git pull
+cd backend && pip install -r requirements.txt
+python manage.py migrate
+python manage.py collectstatic --noinput
+```
+
+Upload and unzip the new `dist.zip` if needed (delete the old `dist/` first), then click **Reload**.
+
+**Backups:** now and then, download `backend/db.sqlite3` from the Files tab.
+
+---
+
 # Check your understanding: questions and answers
 
 <details>
@@ -2539,12 +2790,32 @@ Open http://localhost:8123. Pages and the admin should load. Logging in won't wo
 
 </details>
 
+<details>
+<summary><b>Lesson 14</b></summary>
+
+1. **Why doesn't changing a class's weapon rename it?** The name is stored text. *Generate* fills it in once; nothing recomputes it later.
+2. **Why doesn't `update-following` copy start and end?** Each week's class needs a different date. Copying one time onto all of them would stack them on the same day.
+3. **What does `.update()` skip, compared with saving each row?** It runs one SQL `UPDATE`, without loading the objects or calling `save()` on each one. That makes it fast, but any custom `save()` logic wouldn't run.
+4. **Why `useState(() => initialForm(...))` instead of `useState(initialForm(...))`?** With a function, React only calls it on the first render. Otherwise it would rebuild the starting values on every render and throw them away.
+
+</details>
+
+<details>
+<summary><b>Lesson 15</b></summary>
+
+1. **Why does SQLite work on PythonAnywhere's free tier but not Render's?** PythonAnywhere's home folder is permanent. Render's free tier starts from fresh files on every deploy and restart, and only paid plans can attach a disk.
+2. **Why set the variables in both the WSGI file and `postactivate`?** The web server only reads the WSGI file, and console commands like `migrate` and `collectstatic` only see the virtualenv. Both need the same settings, or the console works against development settings.
+3. **Why is the WSGI file a safe place for the secret key?** It lives in `/var/www/` on PythonAnywhere, outside your repo, so it never gets committed.
+4. **What would happen if `SITE_HOST` were missing?** `ALLOWED_HOSTS` would only contain `localhost` and `127.0.0.1`, so with debug off Django would answer every request with "Bad Request (400)".
+5. **Why build React on your Mac?** `dist/` is gitignored, and the free tier's limited internet makes running `npm` there unreliable. Building locally and uploading the output is simpler.
+
+</details>
+
 ---
 
 # What's next
 
 - **A `Coach` model:** pick coaches from a list instead of typing names.
-- **Edit a whole series:** "change the coach for all following classes".
 - **Overlap warnings** when two classes clash, using the same overlap rule.
-- **Edit forms:** reuse `ClassForm` and `MemberForm` to edit existing classes and members.
+- **Edit members** in the app, reusing `MemberForm` the way `ClassForm` now edits classes.
 - **Rebuild the frontend in htmx:** the Django models, admin and much of the API carry over.
