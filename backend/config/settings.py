@@ -16,9 +16,6 @@ from pathlib import Path
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# The React app's production build (`npm run build`), served by Django online.
-FRONTEND_DIST = BASE_DIR.parent / 'frontend' / 'dist'
-
 
 # Locally nothing needs setting. Online, Render's environment variables switch
 # debug off and supply the secret key.
@@ -35,7 +32,7 @@ else:
     SECRET_KEY = os.environ['DJANGO_SECRET_KEY']  # crash rather than run with a known key
 
 ALLOWED_HOSTS = ['localhost', '127.0.0.1']
-CSRF_TRUSTED_ORIGINS = ['http://localhost:5173']
+CSRF_TRUSTED_ORIGINS = []
 
 # The app's public address, e.g. jorellesee.pythonanywhere.com.
 # Render sets RENDER_EXTERNAL_HOSTNAME itself; elsewhere, set SITE_HOST.
@@ -56,6 +53,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'club',
+    'web',
 ]
 
 MIDDLEWARE = [
@@ -138,15 +136,16 @@ USE_TZ = True
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'  # where `collectstatic` copies the admin's files
 
-# WhiteNoise serves static files from gunicorn, with long-lived cache headers.
+# Online, WhiteNoise serves static files with long-lived cache headers. Their names
+# get a hash of their contents from `collectstatic`, so browsers fetch them again
+# when they change. Locally (and in tests) runserver serves them as they are.
 STORAGES = {
     'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
-    'staticfiles': {'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage'},
+    'staticfiles': {
+        'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage' if DEBUG
+        else 'whitenoise.storage.CompressedManifestStaticFilesStorage',
+    },
 }
-
-# Serve the React build's files (assets/, favicon) from the site root.
-if FRONTEND_DIST.exists():
-    WHITENOISE_ROOT = FRONTEND_DIST
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
@@ -157,10 +156,14 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'club.permissions.RoleAccess',
     ],
+    'EXCEPTION_HANDLER': 'club.views.exception_handler',
 }
 
-# Invite and password reset emails link here: the Vite dev server locally, the site online.
-FRONTEND_URL = f'https://{SITE_HOST}' if SITE_HOST else 'http://localhost:5173'
+# The pages send anyone not logged in here.
+LOGIN_URL = 'login'
+
+# Invite and password reset emails link here: runserver locally, the site online.
+SITE_URL = f'https://{SITE_HOST}' if SITE_HOST else 'http://localhost:8000'
 
 # Locally, emails print in the runserver terminal. Online, set EMAIL_HOST and friends,
 # e.g. smtp.gmail.com with a Gmail app password.

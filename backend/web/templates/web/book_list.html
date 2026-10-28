@@ -1,0 +1,31 @@
+{% load club %}
+{# Enrolling returns this list again, without the class just booked. #}
+<div id="book-list">
+  {% if message %}<p class="notice">{{ message }}</p>{% endif %}
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  {% if rows %}
+  <table class="table database">
+    <thead><tr><th>When</th><th>Class</th><th>Weapon</th><th>Coach</th><th>Location</th><th>Spots</th><th></th></tr></thead>
+    <tbody>
+      {% for c in rows %}
+      <tr>
+        <td class="muted">{{ c.start|date:"D j M, H:i" }}</td>
+        <td class="strong">{{ c.name }}</td>
+        <td>{% weapon_tag c.weapon %}</td>
+        <td>{{ c.coach.name|default:'' }}</td>
+        <td>{{ c.location }}</td>
+        <td class="muted">{% if c.spots is None %}Open{% else %}{{ c.spots }} left{% endif %}</td>
+        <td class="row-actions">
+          <button class="button primary" {% if c.spots == 0 %}disabled{% endif %}
+                  hx-post="{% url 'book_class' c.id %}" hx-target="#book-list" hx-swap="outerHTML">
+            {% if c.spots == 0 %}Full{% else %}Enrol{% endif %}
+          </button>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">No upcoming classes to book right now.</p>
+  {% endif %}
+</div>

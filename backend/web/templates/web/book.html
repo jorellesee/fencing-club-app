@@ -1,0 +1,8 @@
+{% extends 'web/layout.html' %}
+{% block main %}
+<div class="page">
+  <h1 class="page-title"><span class="page-icon">➕</span>Book a class</h1>
+  <p class="page-description">Upcoming classes you’re not on yet. Once you enrol, they appear in My classes.</p>
+  {% include 'web/book_list.html' %}
+</div>
+{% endblock %}

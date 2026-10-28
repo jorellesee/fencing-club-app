@@ -3035,6 +3035,84 @@ The calendar is still `/` and the list is still `/table`, so the filters App kee
 
 ---
 
+# Lesson 22: The frontend in htmx and Alpine.js (branch `htmx-frontend`)
+
+**Goal:** the same app with no React and no npm. Django renders every page from templates, htmx swaps parts of a page in place, and Alpine.js keeps the little state that only lives in the browser. Claude built this one, on its own branch, so `main` keeps the React version.
+
+## What changed
+
+| Where | What |
+| --- | --- |
+| `frontend/` | Gone. No `npm run build`, no `dist.zip` to upload |
+| `backend/web/` (new app) | `views.py`, `forms.py`, `urls.py` and `templates/web/`: one Django view per page or piece of a page |
+| `web/static/web/vendor/` | htmx 2.0.11, Alpine.js 3.17.4 and FullCalendar 7.1.3, saved as plain files, so nothing loads from a CDN |
+| `web/static/web/app.js` | The Alpine components: `peek` (side panels), `filters`, `classCalendar`, `lessonCalendar` |
+| `web/static/web/app.css` | The old `App.css`, plus a few lines for htmx and Alpine |
+| `club/services.py` (new) | The club's rules (enrol, repeat weekly, accept a lesson, invite…), moved out of the API's viewsets so the API and the pages share them |
+| `club/views.py` | The viewsets call `services`. A small `exception_handler` turns the services' errors into the API's usual 400s |
+| `config/settings.py` | `'web'` in `INSTALLED_APPS`, `LOGIN_URL`, and `SITE_URL` (was `FRONTEND_URL`) for email links |
+| `web/tests.py` (new) | Tests for the pages: logins, roles, the calendar feed, dialogs, panels, lessons |
+
+The JSON API at `/api/` is still there, with all its tests, but no page uses it now.
+
+## Key ideas
+
+### HTML over the wire
+
+React fetched JSON and built the HTML in the browser. Now the server sends HTML. A button says where its result goes:
+
+```html
+<button hx-post="/classes/5/enrol/" hx-vals='{"enrolled": "1"}'
+        hx-target="closest .panel" hx-swap="outerHTML">Enrol</button>
+```
+
+The view runs `services.enrol(...)` and renders `class_panel.html` again, which replaces the old panel. There's no client-side state to keep in sync: the template is the only description of what a class panel looks like.
+
+### Response headers steer the page
+
+A view can change what happens next with htmx's headers (see the `htmx()` helper in `web/views.py`):
+
+- `HX-Trigger: classesChanged` fires an event in the browser. The calendar listens and calls `refetchEvents()`; the list's `<div hx-trigger="classesChanged from:body">` reloads itself.
+- `HX-Retarget: #panel` puts the response somewhere else. A saved **New class** dialog comes back as the new class's panel.
+- `HX-Trigger-After-Swap: closeModal` closes the dialog, *after* the swap. Closing it first would remove the form that made the request, and htmx skips the swap for a request whose element is gone.
+
+### One page, many fragments: `hx-select`
+
+The list view reloads with `hx-get="/table/" hx-select="#class-table"`. The server returns the whole page and htmx keeps just that part, so there's no separate "rows only" view. `hx-disinherit="*"` on that div matters: htmx attributes are inherited, and without it each row's click would also try to `hx-select="#class-table"` out of the panel it fetched, and find nothing.
+
+### Where Alpine fits
+
+htmx covers anything that talks to the server. Alpine covers state that never needs to:
+
+- **`peek`**: which side panel is open. Each panel's `x-init="selected = '5'"` tells the page which row to highlight; the × and Escape call `close()`. On Members it also keeps `?member=5` in the URL.
+- **`filters`**: the four filter dropdowns use `x-model`. A `$watch` updates the URL and fires `filters-changed`, which the calendar and the list both listen for. The **Calendar | List** links use `:href` to carry the filters across.
+- **Calendars**: `x-data="classCalendar({...})"` makes the FullCalendar when Alpine starts. Clicking an event calls `htmx.ajax('GET', panelUrl, {target: '#panel'})`, so even the calendar opens panels the htmx way.
+
+### Forms are Django forms
+
+`ClassForm`, `MemberForm`, `OwnDetailsForm` and friends do the validation React did by hand. `OwnDetailsForm` makes `email` a `disabled` field, so Django ignores whatever is posted for it: a member can't change their login email even with a hand-made request.
+
+## Running it
+
+```bash
+cd backend
+source .venv/bin/activate
+python manage.py runserver
+```
+
+Open http://localhost:8000. There's no second server any more.
+
+To deploy on PythonAnywhere (Lesson 15), skip the steps about building React and uploading `dist.zip`: `git pull`, `python manage.py collectstatic --noinput`, `python manage.py migrate`, then **Reload**.
+
+## Try it
+
+1. As a manager, pick a weapon filter, then switch to **List**. The filter comes with you, and the URL shows it.
+2. Click a row: the panel opens and the row highlights. Press Escape.
+3. **+ New class**, fill in a weapon and location, press **Generate**, then **Create class**. The dialog closes, the panel opens and the calendar updates, all from one response.
+4. As a member, drag across a free time on **Private lessons**. As the coach, click the dashed request and **Accept**.
+
+---
+
 # Check your understanding: questions and answers
 
 <details>
@@ -3196,4 +3274,4 @@ The calendar is still `/` and the list is still `/table`, so the filters App kee
 - **A `Coach` model:** pick coaches from a list instead of typing names. Coach logins would then link to it instead of matching `coach_name` text.
 - **Overlap warnings** when two classes clash, using the same overlap rule.
 - **Edit members** in the app, reusing `MemberForm` the way `ClassForm` now edits classes.
-- **Rebuild the frontend in htmx:** the Django models, admin and much of the API carry over.
+- **Rebuild the frontend in htmx:** done on the `htmx-frontend` branch (Lesson 22).

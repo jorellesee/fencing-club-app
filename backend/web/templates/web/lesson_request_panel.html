@@ -1,0 +1,25 @@
+{% load club %}
+{# A pending lesson request, opened from the calendar. The coach or a manager #}
+{# answers it; the member who asked can cancel it. #}
+<aside class="panel" x-init="selected = 'request-{{ lesson.id }}'" @keydown.escape.window="if (!document.querySelector('#modal .modal')) close()">
+  <button class="close" @click="close()" aria-label="Close">×</button>
+  <h2>Lesson request</h2>
+  <p class="meta">{{ lesson.start|date:"D j M, H:i" }} – {{ lesson.end|date:"H:i" }}</p>
+  <dl class="properties">
+    <dt>Member</dt><dd>{{ lesson.member.name }}</dd>
+    <dt>Coach</dt><dd>{{ lesson.coach.name }}</dd>
+    <dt>Status</dt><dd>{% lesson_status lesson.status %}</dd>
+  </dl>
+  <h3>Note</h3>
+  <p class="meta">{{ lesson.note|default:'No note.' }}</p>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  <div class="row-actions panel-actions">
+    {% if request.role == 'member' %}
+      <button class="button" hx-post="{% url 'lesson_request_answer' lesson.id 'cancel' %}" hx-target="closest .panel" hx-swap="outerHTML">Cancel request</button>
+    {% else %}
+      <button class="button" hx-post="{% url 'lesson_request_answer' lesson.id 'decline' %}" hx-target="closest .panel" hx-swap="outerHTML">Decline</button>
+      <button class="button primary" hx-post="{% url 'lesson_request_answer' lesson.id 'accept' %}" hx-target="closest .panel" hx-swap="outerHTML">Accept</button>
+    {% endif %}
+  </div>
+  {% if request.role != 'member' %}<p class="meta">Accepting puts it on the calendar as a one-person class.</p>{% endif %}
+</aside>

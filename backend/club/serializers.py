@@ -1,11 +1,9 @@
-from datetime import timedelta
-
 from django.contrib.auth.models import User
-from django.utils import timezone
 from rest_framework import serializers
 
 from .emails import display_name
-from .models import Attendance, Coach, FencingClass, LessonRequest, Member, Profile
+from .models import Attendance, Coach, FencingClass, LessonRequest, Member
+from .services import lesson_time_errors
 
 
 def login_status(user):
@@ -79,26 +77,10 @@ class LoginSerializer(serializers.ModelSerializer):
 
 
 class InviteSerializer(serializers.Serializer):
-    """A member or a coach, who already has an email address."""
+    """A member or a coach. services.invite checks they have an email address."""
 
     member = serializers.PrimaryKeyRelatedField(queryset=Member.objects.all(), required=False)
     coach = serializers.PrimaryKeyRelatedField(queryset=Coach.objects.all(), required=False)
-
-    def validate(self, data):
-        if data.get('member'):
-            key, role = 'member', Profile.Role.MEMBER
-        elif data.get('coach'):
-            key, role = 'coach', Profile.Role.COACH
-        else:
-            raise serializers.ValidationError({'detail': 'Choose a member or a coach to invite.'})
-        person = data[key]
-        if not person.email:
-            raise serializers.ValidationError(
-                {key: f'Add an email address to this {key} first.'}
-            )
-        data['role'] = role
-        data['email'] = person.email.strip().lower()
-        return data
 
 
 class FencingClassSerializer(serializers.ModelSerializer):
@@ -149,12 +131,9 @@ class LessonRequestSerializer(serializers.ModelSerializer):
         read_only_fields = ['member', 'status', 'fencing_class']
 
     def validate(self, data):
-        if data['end'] <= data['start']:
-            raise serializers.ValidationError({'end': 'End must be after start.'})
-        if data['start'] <= timezone.now():
-            raise serializers.ValidationError({'start': 'Choose a time in the future.'})
-        if data['end'] - data['start'] > timedelta(hours=3):
-            raise serializers.ValidationError({'end': 'A lesson can be at most 3 hours.'})
+        errors = lesson_time_errors(data['start'], data['end'])
+        if errors:
+            raise serializers.ValidationError(errors)
         return data
 
 

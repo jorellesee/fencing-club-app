@@ -1,0 +1,29 @@
+{% extends 'web/layout.html' %}
+{% load club %}
+{% block main %}
+<div class="page">
+  <h1 class="page-title"><span class="page-icon">🧑‍🏫</span>Coaches</h1>
+  <div class="toolbar">
+    <span></span>
+    <button class="button primary" hx-get="{% url 'coach_new' %}" hx-target="#modal">+ New coach</button>
+  </div>
+  {% if coaches %}
+  <table class="table database">
+    <thead><tr><th>Name</th><th>Weapon</th><th>Classes</th><th>Next class</th><th>Status</th></tr></thead>
+    <tbody>
+      {% for coach in coaches %}
+      <tr>
+        <td><a class="row-link strong" href="{% url 'coach' coach.id %}">{{ coach.name }}</a></td>
+        <td>{% weapon_tag coach.weapon %}</td>
+        <td>{{ coach.class_count }}</td>
+        <td class="muted">{{ coach.next_class|date:"D j M, H:i" }}</td>
+        <td>{% active_tag coach.active %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">No coaches yet. Click New coach to add one.</p>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,11 @@
+{% if editable %}
+{# Saves as soon as it changes, and the response replaces the panel it's in. #}
+<select name="status" class="tag tag-select status-{{ row.status }}"
+        hx-post="{% url 'attendance_status' row.id %}{% if source == 'member' %}?from=member{% endif %}"
+        hx-target="{% if source == 'member' %}#member-details{% else %}closest .panel{% endif %}"
+        hx-swap="outerHTML">
+  {% for status in statuses %}<option value="{{ status }}" {% if status == row.status %}selected{% endif %}>{{ status }}</option>{% endfor %}
+</select>
+{% else %}
+<span class="tag status-{{ row.status }}">{{ row.status }}</span>
+{% endif %}

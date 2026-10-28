@@ -1,16 +1,29 @@
 from django.conf import settings
+from django.contrib.auth.models import User
 from django.contrib.auth.tokens import default_token_generator
+from django.core.exceptions import ValidationError
 from django.core.mail import send_mail
 from django.utils.encoding import force_bytes
-from django.utils.http import urlsafe_base64_encode
+from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 
 
 def set_password_link(user):
-    """A link to the React set-password page. Django's token stops working once the
+    """A link to the set-password page. Django's token stops working once the
     password changes, so each link works once, and also expires after PASSWORD_RESET_TIMEOUT."""
     uid = urlsafe_base64_encode(force_bytes(user.pk))
     token = default_token_generator.make_token(user)
-    return f'{settings.FRONTEND_URL}/set-password/{uid}/{token}'
+    return f'{settings.SITE_URL}/set-password/{uid}/{token}'
+
+
+def user_from_link(uidb64, token):
+    """The user an invite or reset link is for, or None if it's expired or used."""
+    try:
+        user = User.objects.get(pk=urlsafe_base64_decode(uidb64).decode())
+    except (TypeError, ValueError, OverflowError, User.DoesNotExist, ValidationError):
+        return None
+    if user.is_active and default_token_generator.check_token(user, token):
+        return user
+    return None
 
 
 def display_name(user):

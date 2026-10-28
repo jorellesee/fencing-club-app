@@ -1,0 +1,20 @@
+{% extends 'web/modal.html' %}
+{% block title %}{% if editing %}Edit member{% else %}New member{% endif %}{% endblock %}
+{% block content %}
+<form class="form" hx-post="{{ request.get_full_path }}" hx-target="#modal">
+  {% include 'web/field.html' with field=form.name %}
+  <div class="form-row">
+    {% include 'web/field.html' with field=form.email %}
+    {% include 'web/field.html' with field=form.phone %}
+  </div>
+  <div class="form-row">
+    {% include 'web/field.html' with field=form.weapon %}
+    {% if form.primary_coach %}{% include 'web/field.html' with field=form.primary_coach %}{% endif %}
+  </div>
+  {% if form.active %}{% include 'web/field.html' with field=form.active %}{% endif %}
+  <div class="form-actions">
+    <button type="button" class="button" @click="closeModal()">Cancel</button>
+    <button class="button primary">{% if editing %}Save{% else %}Add member{% endif %}</button>
+  </div>
+</form>
+{% endblock %}

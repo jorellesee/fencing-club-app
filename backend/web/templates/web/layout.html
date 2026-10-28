@@ -1,0 +1,31 @@
+{% extends 'web/base.html' %}
+{% block body %}
+{% with name=request.resolver_match.url_name %}
+<div class="app">
+  <nav class="sidebar">
+    <div class="workspace"><span class="workspace-icon">🤺</span>Fencing Club</div>
+    {# One item for both views; the page itself switches between them. #}
+    <a href="{% url 'calendar' %}" class="nav-item {% if name == 'calendar' or name == 'class_table' %}active{% endif %}">
+      <span class="nav-icon">📅</span>{% if request.role == 'manager' %}Classes{% else %}My classes{% endif %}
+    </a>
+    {% if request.role == 'member' %}
+      <a href="{% url 'book' %}" class="nav-item {% if name == 'book' %}active{% endif %}"><span class="nav-icon">➕</span>Book a class</a>
+      <a href="{% url 'lessons' %}" class="nav-item {% if name == 'lessons' %}active{% endif %}"><span class="nav-icon">🎯</span>Private lessons</a>
+      <a href="{% url 'profile' %}" class="nav-item {% if name == 'profile' %}active{% endif %}"><span class="nav-icon">👤</span>My profile</a>
+    {% endif %}
+    {% if request.role == 'manager' %}
+      <a href="{% url 'members' %}" class="nav-item {% if name == 'members' %}active{% endif %}"><span class="nav-icon">👥</span>Members</a>
+      <a href="{% url 'coaches' %}" class="nav-item {% if name == 'coaches' or name == 'coach' %}active{% endif %}"><span class="nav-icon">🧑‍🏫</span>Coaches</a>
+    {% endif %}
+    <div class="account">
+      <div class="account-name">{{ user.get_username }}<span class="muted"> · {{ request.role|capfirst }}</span></div>
+      <form method="post" action="{% url 'logout' %}">
+        {% csrf_token %}
+        <button class="nav-item account-logout"><span class="nav-icon">↩</span>Log out</button>
+      </form>
+    </div>
+  </nav>
+  <main class="main">{% block main %}{% endblock %}</main>
+</div>
+{% endwith %}
+{% endblock %}

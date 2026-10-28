@@ -1,0 +1,20 @@
+{% load club %}
+<h2 class="section-title">{{ title }}</h2>
+{% if rows %}
+<table class="table database">
+  <thead><tr><th>When</th><th>Class</th><th>Weapon</th><th>Location</th><th>Present</th></tr></thead>
+  <tbody>
+    {% for c in rows %}
+    <tr>
+      <td class="muted">{{ c.start|date:"D j M, H:i" }}</td>
+      <td class="strong">{{ c.name }}</td>
+      <td>{% weapon_tag c.weapon %}</td>
+      <td>{{ c.location }}</td>
+      <td>{{ c|headcount }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">{{ empty }}</p>
+{% endif %}

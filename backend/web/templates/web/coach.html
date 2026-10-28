@@ -1,0 +1,47 @@
+{% extends 'web/layout.html' %}
+{% load club %}
+{% block main %}
+<div class="page">
+  <div class="breadcrumbs"><a href="{% url 'coaches' %}">Coaches</a> / {{ coach.name }}</div>
+  <div class="avatar">{{ coach.name|first }}</div>
+  <h1 class="page-title">{{ coach.name }}</h1>
+  <div class="toolbar">
+    <span></span>
+    <button class="button" hx-get="{% url 'coach_edit' coach.id %}" hx-target="#modal">Edit coach</button>
+  </div>
+
+  <dl class="properties">
+    <dt>Classes</dt><dd>{{ coach.class_count }}</dd>
+    <dt>Next class</dt>
+    <dd>{% if coach.next_class %}{{ coach.next_class|date:"D j M, H:i" }}{% else %}<span class="muted">None booked</span>{% endif %}</dd>
+    <dt>Weapon</dt>
+    <dd>{% if coach.weapon %}{% weapon_tag coach.weapon %}{% else %}<span class="muted">Empty</span>{% endif %}</dd>
+    <dt>Email</dt><dd>{{ coach.email|default:'<span class="muted">Empty</span>' }}</dd>
+    <dt>Phone</dt><dd>{{ coach.phone|default:'<span class="muted">Empty</span>' }}</dd>
+    <dt>Status</dt><dd>{% active_tag coach.active %}</dd>
+    <dt>Login</dt>
+    {% include 'web/login_row.html' with person=coach kind='coach' %}
+  </dl>
+
+  <h2 class="section-title">Members they coach</h2>
+  {% if members %}
+  <table class="table database">
+    <thead><tr><th>Name</th><th>Weapon</th><th>Status</th></tr></thead>
+    <tbody>
+      {% for member in members %}
+      <tr>
+        <td><a class="row-link strong" href="{% url 'members' %}?member={{ member.id }}">{{ member.name }}</a></td>
+        <td>{% weapon_tag member.weapon %}</td>
+        <td>{% active_tag member.active %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">No members have {{ coach.name }} as their primary coach.</p>
+  {% endif %}
+
+  {% include 'web/coach_classes.html' with title='Upcoming classes' rows=upcoming empty='No upcoming classes.' %}
+  {% include 'web/coach_classes.html' with title='Recent classes' rows=past empty='No past classes.' %}
+</div>
+{% endblock %}

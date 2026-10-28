@@ -1,0 +1,25 @@
+{% load static %}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <title>{% block title %}Fencing Club{% endblock %}</title>
+  <link rel="icon" href="{% static 'web/favicon.svg' %}" type="image/svg+xml">
+  <link rel="stylesheet" href="{% static 'web/vendor/fullcalendar/skeleton.css' %}">
+  <link rel="stylesheet" href="{% static 'web/vendor/fullcalendar/classic-theme.css' %}">
+  <link rel="stylesheet" href="{% static 'web/vendor/fullcalendar/classic-palette.css' %}">
+  <link rel="stylesheet" href="{% static 'web/app.css' %}">
+  <script defer src="{% static 'web/vendor/htmx.min.js' %}"></script>
+  <script defer src="{% static 'web/vendor/fullcalendar/fullcalendar.js' %}"></script>
+  <script defer src="{% static 'web/vendor/fullcalendar/classic-theme.js' %}"></script>
+  <script defer src="{% static 'web/app.js' %}"></script>
+  <script defer src="{% static 'web/vendor/alpine.min.js' %}"></script>
+</head>
+{# Every htmx request sends the CSRF token, so Django accepts its POSTs. #}
+<body hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
+  {% block body %}{% endblock %}
+  {# Dialogs are loaded into here, and closed by emptying it. #}
+  <div id="modal"></div>
+</body>
+</html>

@@ -1,0 +1,20 @@
+{% load club %}
+{# The Login property: invite them, resend the invite, or switch their login off and on. #}
+<dd class="login-row" id="login-row">
+  {% if login %}{% login_tag login.status %}{% else %}<span class="muted">None</span>{% endif %}
+  {% if not login or login.status == 'invited' %}
+    {% if person.email %}
+      <button class="button" hx-post="{% if kind == 'member' %}{% url 'member_invite' person.id %}{% else %}{% url 'coach_invite' person.id %}{% endif %}"
+              hx-target="#login-row" hx-swap="outerHTML">{% if login %}Resend invite{% else %}Invite to log in{% endif %}</button>
+    {% else %}
+      <span class="muted">Add an email to invite them</span>
+    {% endif %}
+  {% endif %}
+  {% if login and login.status != 'deactivated' %}
+    <button class="button" hx-post="{% url 'login_active' login.id %}" hx-vals='{"active": "0"}' hx-target="#login-row" hx-swap="outerHTML">Switch off</button>
+  {% elif login %}
+    <button class="button" hx-post="{% url 'login_active' login.id %}" hx-vals='{"active": "1"}' hx-target="#login-row" hx-swap="outerHTML">Switch on</button>
+  {% endif %}
+  {% if notice %}<span class="muted">{{ notice }}</span>{% endif %}
+  {% if error %}<span class="error">{{ error }}</span>{% endif %}
+</dd>

@@ -1,0 +1,34 @@
+{% load club %}
+<h2 class="section-title">{{ title }}</h2>
+{% if rows %}
+<table class="table database clickable">
+  <thead>
+    <tr>
+      <th>When</th>
+      <th>Class</th>
+      <th>Weapon</th>
+      {% if request.role != 'coach' %}<th>Coach</th>{% endif %}
+      <th>Location</th>
+      <th>{% if request.role == 'member' %}My status{% else %}Present{% endif %}</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for c in rows %}
+    <tr hx-get="{% url 'class_panel' c.id %}" hx-target="#panel" :class="{ selected: selected === '{{ c.id }}' }">
+      <td class="muted">{{ c.start|date:"D j M, H:i" }}</td>
+      <td class="strong">{{ c.name }}</td>
+      <td>{% weapon_tag c.weapon %}</td>
+      {% if request.role != 'coach' %}<td>{{ c.coach.name|default:'' }}</td>{% endif %}
+      <td>{{ c.location }}</td>
+      <td>
+        {% if request.role == 'member' %}
+          {% if c.my_status %}<span class="tag status-{{ c.my_status }}">{{ c.my_status }}</span>{% endif %}
+        {% else %}{{ c|headcount }}{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">{{ empty }}</p>
+{% endif %}

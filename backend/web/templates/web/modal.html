@@ -1,0 +1,8 @@
+{# A dialog. Escape, the × or a click outside it closes it, by emptying #modal. #}
+<div class="modal-backdrop" x-data @mousedown.self="closeModal()" @keydown.escape.window="closeModal()">
+  <div class="modal">
+    <button type="button" class="close" @click="closeModal()" aria-label="Close">×</button>
+    <h2>{% block title %}{% endblock %}</h2>
+    {% block content %}{% endblock %}
+  </div>
+</div>

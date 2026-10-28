@@ -1,0 +1,22 @@
+{% extends 'web/layout.html' %}
+{% load club %}
+{% block main %}
+<div class="calendar-page" x-data="peek()">
+  <div class="page-scroll">
+    <div class="page" x-data="filters({{ filters_json }})">
+      {% include 'web/classes_header.html' %}
+      {# Reloads itself when the filters change or a class is edited. hx-select #}
+      {# picks this part out of the whole page that /table/ returns. hx-disinherit #}
+      {# stops the rows inside from picking up these attributes for their own requests. #}
+      <div id="class-table"
+           hx-get="{% url 'class_table' %}" hx-include="#filters"
+           hx-trigger="filters-changed from:window, classesChanged from:body"
+           hx-select="#class-table" hx-swap="outerHTML" hx-disinherit="*">
+        {% include 'web/class_rows.html' with title='Upcoming' rows=upcoming empty='No upcoming classes.' %}
+        {% include 'web/class_rows.html' with title='Past' rows=past empty='No past classes.' %}
+      </div>
+    </div>
+  </div>
+  <div id="panel"></div>
+</div>
+{% endblock %}

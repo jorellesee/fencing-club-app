@@ -1,32 +1,40 @@
 import json
-import uuid
-from datetime import timedelta
 
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.forms import SetPasswordForm
 from django.contrib.auth.models import User
-from django.contrib.auth.tokens import default_token_generator
-from django.core.cache import cache
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.db import transaction
 from django.db.models import Count, Max, Min, Q
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import ensure_csrf_cookie
-from django.utils.http import urlsafe_base64_decode
 from django.views.decorators.http import require_http_methods, require_POST
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
+from rest_framework.views import exception_handler as drf_exception_handler
 
-from .emails import display_name, send_invite, send_password_reset
-from .models import Attendance, Coach, FencingClass, LessonRequest, Member, Profile
+from . import services
+from .emails import display_name, send_password_reset, user_from_link
+from .models import Attendance, Coach, FencingClass, LessonRequest, Member
 from .permissions import COACH, MEMBER, role_of
 from .serializers import (
     AttendanceSerializer, CoachSerializer, FencingClassSerializer, InviteSerializer,
     LessonRequestSerializer, LoginSerializer, MemberSerializer, RepeatSerializer,
 )
+
+
+def exception_handler(exc, context):
+    """Turns the ValidationErrors from club/services.py into 400 responses, like
+    DRF's own: {"detail": "..."}, or {"field": "..."} for one field."""
+    if isinstance(exc, DjangoValidationError):
+        if hasattr(exc, 'error_dict'):
+            detail = {field: ' '.join(messages) for field, messages in exc.message_dict.items()}
+        else:
+            detail = {'detail': ' '.join(exc.messages)}
+        exc = ValidationError(detail)
+    return drf_exception_handler(exc, context)
 
 
 def coaches_class(user, fencing_class):
@@ -135,33 +143,12 @@ class FencingClassViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def enrol(self, request, pk=None):
         fencing_class = self.get_object()
-        member = request.user.profile.member
-        if member is None or not member.active:
-            raise ValidationError({'detail': 'Your membership isn’t active. Ask a manager.'})
-        if fencing_class.start <= timezone.now():
-            raise ValidationError({'detail': 'This class has already started.'})
-        with transaction.atomic():
-            if fencing_class.attendance.filter(member=member).exists():
-                raise ValidationError({'detail': 'You’re already on this class.'})
-            capacity = fencing_class.capacity
-            if capacity is not None and fencing_class.attendance.count() >= capacity:
-                raise ValidationError({'detail': 'This class is full.'})
-            row = Attendance.objects.create(
-                fencing_class=fencing_class, member=member, status='enrolled'
-            )
+        row = services.enrol(services.own_member(request.user), fencing_class)
         return Response(AttendanceSerializer(row).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['post'])
     def unenrol(self, request, pk=None):
-        fencing_class = self.get_object()
-        row = fencing_class.attendance.filter(member__profile__user=request.user).first()
-        if row is None:
-            raise ValidationError({'detail': 'You’re not on this class.'})
-        if fencing_class.start <= timezone.now() or row.status != 'enrolled':
-            raise ValidationError(
-                {'detail': 'Only upcoming enrolments can be cancelled. Ask a manager.'}
-            )
-        row.delete()
+        services.unenrol(request.user, self.get_object())
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(detail=False)
@@ -179,66 +166,23 @@ class FencingClassViewSet(viewsets.ModelViewSet):
         fencing_class = self.get_object()
         serializer = RepeatSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        until = serializer.validated_data['until']
-
-        if until > timezone.localdate(fencing_class.start) + timedelta(days=366):
-            raise ValidationError({'until': 'Repeat for at most one year.'})
-        if fencing_class.series and FencingClass.objects.filter(
-            series=fencing_class.series, start__gt=fencing_class.start
-        ).exists():
-            raise ValidationError({'detail': 'Repeat from the last class in the series.'})
-
-        roster = list(fencing_class.attendance.values_list('member_id', flat=True))
-        created = 0
-        with transaction.atomic():
-            if fencing_class.series is None:
-                fencing_class.series = uuid.uuid4()
-                fencing_class.save(update_fields=['series'])
-            week = 1
-            while timezone.localdate(fencing_class.start + timedelta(weeks=week)) <= until:
-                copy = FencingClass.objects.create(
-                    name=fencing_class.name,
-                    start=fencing_class.start + timedelta(weeks=week),
-                    end=fencing_class.end + timedelta(weeks=week),
-                    coach=fencing_class.coach,
-                    location=fencing_class.location,
-                    weapon=fencing_class.weapon,
-                    capacity=fencing_class.capacity,
-                    notes=fencing_class.notes,
-                    series=fencing_class.series,
-                )
-                Attendance.objects.bulk_create([
-                    Attendance(fencing_class=copy, member_id=member_id, status='enrolled')
-                    for member_id in roster
-                ])
-                created += 1
-                week += 1
+        created = services.repeat_weekly(fencing_class, serializer.validated_data['until'])
         return Response({'created': created}, status=status.HTTP_201_CREATED)
-
-    # Times stay per class, and notes are usually about one week.
-    SERIES_FIELDS = ['name', 'coach', 'location', 'weapon', 'capacity']
 
     @action(detail=True, methods=['post'], url_path='update-following')
     def update_following(self, request, pk=None):
         fencing_class = self.get_object()
-        if fencing_class.series is None:
-            raise ValidationError({'detail': 'This class is not part of a series.'})
-        data = {key: value for key, value in request.data.items() if key in self.SERIES_FIELDS}
+        following = services.following(fencing_class)
+        data = {
+            key: value for key, value in request.data.items() if key in services.SERIES_FIELDS
+        }
         serializer = self.get_serializer(fencing_class, data=data, partial=True)
         serializer.is_valid(raise_exception=True)
-        following = FencingClass.objects.filter(
-            series=fencing_class.series, start__gte=fencing_class.start
-        )
         return Response({'updated': following.update(**serializer.validated_data)})
 
     @action(detail=True, methods=['post'], url_path='delete-following')
     def delete_following(self, request, pk=None):
-        fencing_class = self.get_object()
-        if fencing_class.series is None:
-            raise ValidationError({'detail': 'This class is not part of a series.'})
-        following = FencingClass.objects.filter(
-            series=fencing_class.series, start__gte=fencing_class.start
-        )
+        following = services.following(self.get_object())
         count = following.count()
         following.delete()
         return Response({'deleted': count})
@@ -280,24 +224,6 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         return Response(self.get_serializer(rows, many=True).data)
 
 
-def coaches_of(member):
-    """The coaches a member can ask for lessons: their primary coach, and whoever
-    coaches a class they're on."""
-    return Coach.objects.filter(
-        Q(members=member) | Q(classes__attendance__member=member), active=True
-    ).distinct()
-
-
-def coach_bookings(coach, start, end):
-    """The coach's classes and pending lesson requests overlapping start to end.
-    Accepted lessons are classes already, so they're in the first list."""
-    classes = FencingClass.objects.filter(coach=coach, start__lt=end, end__gt=start)
-    pending = LessonRequest.objects.filter(
-        coach=coach, status=LessonRequest.Status.PENDING, start__lt=end, end__gt=start
-    )
-    return classes, pending
-
-
 class LessonRequestViewSet(mixins.ListModelMixin, mixins.CreateModelMixin,
                            viewsets.GenericViewSet):
     """Members request private lessons. The coach, or a manager, accepts or declines."""
@@ -337,98 +263,42 @@ class LessonRequestViewSet(mixins.ListModelMixin, mixins.CreateModelMixin,
             queryset = queryset.filter(member=params['member'])
         return queryset
 
-    def own_member(self):
-        member = self.request.user.profile.member
-        if member is None or not member.active:
-            raise ValidationError({'detail': 'Your membership isn’t active. Ask a manager.'})
-        return member
-
     def perform_create(self, serializer):
-        if role_of(self.request.user) != MEMBER:
-            raise ValidationError({'detail': 'Only members can request lessons.'})
-        member = self.own_member()
-        data = serializer.validated_data
-        if not coaches_of(member).filter(id=data['coach'].id).exists():
-            raise ValidationError({'coach': 'You can only ask your own coaches.'})
-        with transaction.atomic():
-            classes, pending = coach_bookings(data['coach'], data['start'], data['end'])
-            if classes.exists() or pending.exists():
-                raise ValidationError({'detail': f'{data["coach"].name} is busy then.'})
-            serializer.save(member=member)
+        serializer.instance = services.request_lesson(self.request.user, **serializer.validated_data)
 
     @action(detail=False)
     def coaches(self, request):
         """Just names, so members don't see coaches' contact details."""
-        coaches = coaches_of(self.own_member())
+        coaches = services.coaches_of(services.own_member(request.user))
         return Response([{'id': coach.id, 'name': coach.name} for coach in coaches])
 
     @action(detail=False)
     def busy(self, request):
         """When one of the member's coaches is booked, without saying what with."""
-        member = self.own_member()
-        coach = coaches_of(member).filter(id=request.query_params.get('coach')).first()
+        member = services.own_member(request.user)
+        coach = services.coaches_of(member).filter(id=request.query_params.get('coach')).first()
         start = request.query_params.get('start')
         end = request.query_params.get('end')
         if coach is None or not (start and end):
             raise ValidationError({'detail': 'Choose one of your coaches and a date range.'})
-        classes, pending = coach_bookings(coach, start, end)
-        # The member's own requests and lessons come from list() instead, with details.
-        classes = classes.exclude(lesson_request__member=member)
-        pending = pending.exclude(member=member)
-        slots = [*classes.values('start', 'end'), *pending.values('start', 'end')]
-        return Response(sorted(slots, key=lambda slot: slot['start']))
-
-    def pending_lesson(self):
-        lesson = self.get_object()
-        if lesson.status != LessonRequest.Status.PENDING:
-            raise ValidationError({'detail': f'This request is already {lesson.status}.'})
-        return lesson
+        return Response(services.busy_slots(member, coach, start, end))
 
     @action(detail=True, methods=['post'])
     def accept(self, request, pk=None):
-        lesson = self.pending_lesson()
-        with transaction.atomic():
-            if FencingClass.objects.filter(
-                coach=lesson.coach, start__lt=lesson.end, end__gt=lesson.start
-            ).exists():
-                raise ValidationError({'detail': 'There’s already a class at that time.'})
-            fencing_class = FencingClass.objects.create(
-                name=f'Private lesson: {lesson.member.name}',
-                start=lesson.start,
-                end=lesson.end,
-                coach=lesson.coach,
-                weapon=lesson.member.weapon,
-                capacity=1,
-                notes=lesson.note,
-            )
-            Attendance.objects.create(
-                fencing_class=fencing_class, member=lesson.member, status='enrolled'
-            )
-            lesson.fencing_class = fencing_class
-            lesson.status = LessonRequest.Status.ACCEPTED
-            lesson.save(update_fields=['fencing_class', 'status'])
+        lesson = self.get_object()
+        services.accept_lesson(lesson)
         return Response(self.get_serializer(lesson).data)
 
     @action(detail=True, methods=['post'])
     def decline(self, request, pk=None):
-        lesson = self.pending_lesson()
-        lesson.status = LessonRequest.Status.DECLINED
-        lesson.save(update_fields=['status'])
+        lesson = self.get_object()
+        services.decline_lesson(lesson)
         return Response(self.get_serializer(lesson).data)
 
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
         lesson = self.get_object()
-        if lesson.status not in (LessonRequest.Status.PENDING, LessonRequest.Status.ACCEPTED):
-            raise ValidationError({'detail': f'This request is already {lesson.status}.'})
-        if lesson.start <= timezone.now():
-            raise ValidationError({'detail': 'This lesson has already started.'})
-        with transaction.atomic():
-            if lesson.fencing_class:
-                lesson.fencing_class.delete()
-                lesson.fencing_class = None
-            lesson.status = LessonRequest.Status.CANCELLED
-            lesson.save(update_fields=['fencing_class', 'status'])
+        services.cancel_lesson(lesson)
         return Response(self.get_serializer(lesson).data)
 
 
@@ -446,57 +316,16 @@ class LoginViewSet(mixins.ListModelMixin, mixins.UpdateModelMixin, viewsets.Gene
     def create(self, request):
         invite = InviteSerializer(data=request.data)
         invite.is_valid(raise_exception=True)
-        data = invite.validated_data
-
-        if data['role'] == MEMBER:
-            existing = Profile.objects.filter(member=data['member']).first()
-        else:
-            existing = Profile.objects.filter(coach=data['coach']).first()
-        if existing:
-            # Inviting someone again just resends their email.
-            return self.send_again(existing.user)
-
-        email = data['email']
-        if User.objects.filter(Q(email__iexact=email) | Q(username__iexact=email)).exists():
-            raise ValidationError({'email': 'Another login already uses this email address.'})
-
-        with transaction.atomic():
-            # No password until they choose one from the email's link.
-            user = User(username=email, email=email)
-            user.set_unusable_password()
-            user.save()
-            Profile.objects.create(
-                user=user,
-                role=data['role'],
-                member=data.get('member'),
-                coach=data.get('coach'),
-            )
-            # Inside the transaction, so if the email fails nothing is left half made.
-            send_invite(user)
-        return Response(self.get_serializer(user).data, status=status.HTTP_201_CREATED)
+        user, created = services.invite(**invite.validated_data)
+        return Response(
+            self.get_serializer(user).data,
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
 
     @action(detail=True, methods=['post'])
     def resend(self, request, pk=None):
-        return self.send_again(self.get_object())
-
-    def send_again(self, user):
-        if not user.is_active:
-            raise ValidationError({'detail': f'{display_name(user)}’s login is switched off.'})
-        if user.has_usable_password():
-            raise ValidationError({'detail': f'{display_name(user)} has already set a password.'})
-        # A new unusable password changes the hash, so links in older emails stop working.
-        user.set_unusable_password()
-        user.save(update_fields=['password'])
-        send_invite(user)
+        user = services.send_again(self.get_object())
         return Response(self.get_serializer(user).data)
-
-
-def too_many_attempts(scope, key, limit, period=15 * 60):
-    """Counts attempts at `scope` for `key`, e.g. logins as one username. True once
-    there have been more than `limit` of them within `period` seconds."""
-    cache_key = f'attempts:{scope}:{key}'
-    cache.add(cache_key, 0, period)
-    return cache.incr(cache_key) > limit
 
 
 def account(user):
@@ -522,13 +351,8 @@ def me(request):
 @require_POST
 def login_view(request):
     data = json.loads(request.body or '{}')
-    username = (data.get('username') or '').strip()
-    if '@' in username:
-        # Invited logins use their email as the username, but older ones may not.
-        match = User.objects.filter(email__iexact=username).first()
-        if match:
-            username = match.get_username()
-    if too_many_attempts('login', username.lower(), limit=10):
+    username = services.username_for(data.get('username'))
+    if services.too_many_attempts('login', username.lower(), limit=10):
         return JsonResponse({'detail': 'Too many attempts. Try again in 15 minutes.'}, status=429)
     user = authenticate(request, username=username, password=data.get('password'))
     if user is None or account(user) is None:
@@ -546,23 +370,12 @@ def logout_view(request):
 @require_POST
 def password_reset_view(request):
     email = (json.loads(request.body or '{}').get('email') or '').strip()
-    if email and not too_many_attempts('reset', email.lower(), limit=3):
+    if email and not services.too_many_attempts('reset', email.lower(), limit=3):
         for user in User.objects.filter(email__iexact=email, is_active=True):
             if account(user) is not None:
                 send_password_reset(user)
     # The same answer either way, so nobody can use this to find out who has a login.
     return JsonResponse({'detail': 'If that email has a login, we’ve sent it a link.'})
-
-
-def user_from_link(uidb64, token):
-    """The user an invite or reset link is for, or None if it's expired or used."""
-    try:
-        user = User.objects.get(pk=urlsafe_base64_decode(uidb64).decode())
-    except (TypeError, ValueError, OverflowError, User.DoesNotExist, DjangoValidationError):
-        return None
-    if user.is_active and default_token_generator.check_token(user, token):
-        return user
-    return None
 
 
 @ensure_csrf_cookie

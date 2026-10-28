@@ -1,0 +1,35 @@
+{# The Classes heading, with a switch between the calendar and the list. The links #}
+{# carry the filters along, from the `filters` Alpine component around the page. #}
+{% with name=request.resolver_match.url_name %}
+<div class="title-row">
+  <h1 class="page-title"><span class="page-icon">📅</span>{% if request.role == 'manager' %}Classes{% else %}My classes{% endif %}</h1>
+  <div class="view-toggle">
+    <a href="{% url 'calendar' %}" :href="'{% url 'calendar' %}' + (query && '?' + query)" class="{% if name == 'calendar' %}active{% endif %}">Calendar</a>
+    <a href="{% url 'class_table' %}" :href="'{% url 'class_table' %}' + (query && '?' + query)" class="{% if name == 'class_table' %}active{% endif %}">List</a>
+  </div>
+</div>
+{% endwith %}
+{% if request.role == 'manager' %}
+<div class="toolbar">
+  <form id="filters" class="filters" @submit.prevent>
+    <select class="filter" name="coach" x-model="coach">
+      <option value="">All coaches</option>
+      {% for coach in coach_options %}<option value="{{ coach.id }}">{{ coach.name }}</option>{% endfor %}
+    </select>
+    <select class="filter" name="member" x-model="member">
+      <option value="">All members</option>
+      {% for member in member_options %}<option value="{{ member.id }}">{{ member.name }}</option>{% endfor %}
+    </select>
+    <select class="filter" name="location" x-model="location">
+      <option value="">All locations</option>
+      {% for location in location_options %}<option value="{{ location }}">{{ location }}</option>{% endfor %}
+    </select>
+    <select class="filter" name="weapon" x-model="weapon">
+      <option value="">All weapons</option>
+      {% for value, label in weapon_options %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+    </select>
+    <button type="button" class="button" x-show="active" x-cloak @click="clear()">Clear</button>
+  </form>
+  <button class="button primary" hx-get="{% url 'class_new' %}" hx-target="#modal">+ New class</button>
+</div>
+{% endif %}
