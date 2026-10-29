@@ -3177,6 +3177,131 @@ python manage.py runserver
 
 ---
 
+# Lesson 24: A side peek for coaches
+
+**Goal:** clicking a coach opens a side panel, like members, instead of a separate page. Claude built this one.
+
+## What changed
+
+| Where | What |
+| --- | --- |
+| `coaches/list.html` | The table sits in a `peek` Alpine component, and each row loads the coach with `hx-get` into `#panel`. The open coach is in the URL: `/coaches/?coach=3` |
+| `coaches/panel.html`, `coaches/details.html` (new) | The panel, and the details inside it. `detail.html`, the old full page, is gone |
+| `web/views/coaches.py` | `coach_panel` replaces `coach_page`. Saving **Edit coach** replaces `#coach-details`; **New coach** opens the new coach's panel. Both fire `coachesChanged`, which reloads the table |
+| `members/details.html` | A member's primary coach links to `/coaches/?coach=3` |
+| `club/queries.py` | `classes()` and `coaches()` now `order_by` explicitly (see below) |
+
+## Key ideas
+
+### Same pattern, new data
+
+This is the Members peek again, with nothing new in `app.js`: `peek(selected, 'coach')` keeps `?coach=` in the URL, and the panel's `x-init="selected = '3'"` highlights its row.
+
+### A normal visit to a panel URL
+
+`/coaches/3/` and `/members/3/` return just a panel, which only makes sense inside a page. So when the request doesn't come from htmx (`is_htmx(request)` is false), the view redirects to the list with that panel open. Old bookmarks keep working.
+
+### Django drops default ordering when it counts
+
+`FencingClass.Meta.ordering = ['start']` doesn't apply to a query with `annotate(Count(...))`. Django leaves it out on purpose, because it would change what gets grouped together. So `queries.classes()` came back in no particular order: on the coach panel, a private lesson on 6 Nov showed up after a class on 24 Nov. The fix is an explicit `.order_by('start')`, with a test for it.
+
+---
+
+# Lesson 25: Working on two branches at once with git worktrees
+
+**Goal:** keep `mobile-optimized` open and running while you start something else on a second branch, in a second folder, without stashing or switching.
+
+## Key ideas
+
+### One repository, several folders
+
+`git switch` swaps the files in your one folder, so you have to commit or stash first, and the running server reloads into the other branch. A **worktree** is a second folder checked out from the *same* repository. Each folder has its own branch and its own files; they share the history, the branches and the commits. A commit made in one folder is visible from the other straight away, with no push or pull.
+
+You already have one: `../fencing_club_app-lesson10`, from Lesson 10.
+
+### One branch, one folder
+
+Git won't let the same branch be checked out in two worktrees (`fatal: 'main' is already checked out at ...`). That's on purpose: two folders writing to one branch would trample each other. Each worktree gets its own branch.
+
+### Only committed work travels
+
+A new worktree starts from a **commit**. Anything staged or unstaged in this folder stays here. Right now the Lesson 23–24 changes are staged but not committed, so a worktree made from `mobile-optimized` would not have them. Commit first if you want them in both places.
+
+### Ignored files don't come along
+
+Everything in `.gitignore` is missing from a new worktree: `.venv/`, `db.sqlite3`, `staticfiles/`. Each folder needs its own virtual environment and its own database. The separate database is the point: a migration on one branch can't break the other branch's data.
+
+## Steps
+
+### 1. Make the worktree
+
+Put it next to the project, not inside it, so the two folders never see each other's files:
+
+```bash
+cd ~/Projects/fencing_club_app
+git worktree add -b coach-calendar ../fencing_club_app-coach-calendar mobile-optimized
+git worktree list
+```
+
+`-b coach-calendar` creates the new branch, `../fencing_club_app-coach-calendar` is the folder, `mobile-optimized` is where the branch starts.
+
+### 2. Give it a venv and a database
+
+```bash
+cd ../fencing_club_app-coach-calendar
+python3.10 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp ../fencing_club_app/db.sqlite3 .     # a copy of your test data
+python manage.py migrate
+```
+
+### 3. Run both servers
+
+Two servers can't share a port, and browser cookies ignore the port, so logging in on `localhost:8001` would log you out of `localhost:8000`. Use the other allowed host name for the second one:
+
+```bash
+python manage.py runserver 127.0.0.1:8001
+```
+
+Main folder: http://localhost:8000. New worktree: http://127.0.0.1:8001.
+
+Open the folder in its own VS Code window (`code .`) so the editor, terminal and any Claude Code session there all work on that branch.
+
+### 4. Bring the work back
+
+Commit in the worktree as usual. Then, from the main folder:
+
+```bash
+cd ~/Projects/fencing_club_app
+git merge coach-calendar
+```
+
+**Watch the migrations.** If both branches ran `makemigrations`, both will have a `0011_...`. After merging, `python manage.py migrate` stops with *Conflicting migrations detected*. Fix it with:
+
+```bash
+python manage.py makemigrations --merge
+```
+
+That adds a small migration that depends on both.
+
+### 5. Clean up
+
+```bash
+git worktree remove ../fencing_club_app-coach-calendar
+git branch -d coach-calendar          # -d refuses if it isn't merged yet
+```
+
+`remove` refuses if the folder has uncommitted changes; that's your safety net. If you deleted a worktree folder by hand, `git worktree prune` tidies up the leftovers.
+
+## Try it
+
+1. Run `git worktree list`. What branch is `fencing_club_app-lesson10` on, and is that layout (`backend/`, `frontend/`) still useful to you? If not, remove it.
+2. Make a worktree, change a template there, and run both servers side by side to compare.
+3. In the worktree, run `git log -1`. Then commit something in the *main* folder and run `git log mobile-optimized -1` from the worktree. Why do you see the new commit without pulling?
+
+---
+
 # Check your understanding: questions and answers
 
 <details>

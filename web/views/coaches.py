@@ -1,8 +1,8 @@
-"""Coaches: the list, each coach's page, and the Login row shared with members."""
+"""Coaches: the list with its side peek, and the Login row shared with members."""
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
-from django.http import HttpResponse
-from django.shortcuts import get_object_or_404, render
+from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_http_methods, require_POST
 
@@ -11,27 +11,39 @@ from club.models import Coach, Member
 from club.roles import MANAGER, login_of
 
 from ..forms import CoachForm
-from .common import role_required
+from .common import htmx, is_htmx, role_required
+
+
+def details_context(pk):
+    coach = get_object_or_404(queries.coaches(), pk=pk)
+    now = timezone.now()
+    own = queries.classes().filter(coach=coach)
+    # Five each, so a long weekly series doesn't fill the panel.
+    return {
+        'coach': coach,
+        'login': login_of(coach),
+        'members': Member.objects.filter(primary_coach=coach).order_by('name'),
+        'upcoming': own.filter(end__gte=now)[:5],
+        'past': own.filter(end__lt=now).order_by('-start')[:5],
+    }
 
 
 @role_required(MANAGER)
 def coach_list(request):
-    return render(request, 'web/coaches/list.html', {'coaches': queries.coaches()})
+    selected = request.GET.get('coach', '')
+    selected = int(selected) if selected.isdigit() else None
+    context = {'coaches': queries.coaches(), 'selected': selected}
+    if selected:
+        context.update(details_context(selected))
+    return render(request, 'web/coaches/list.html', context)
 
 
 @role_required(MANAGER)
-def coach_page(request, pk):
-    coach = get_object_or_404(queries.coaches(), pk=pk)
-    now = timezone.now()
-    own = queries.classes().filter(coach=coach)
-    # Ten each, so a long weekly series doesn't fill the page.
-    return render(request, 'web/coaches/detail.html', {
-        'coach': coach,
-        'login': login_of(coach),
-        'members': Member.objects.filter(primary_coach=coach).order_by('name'),
-        'upcoming': own.filter(end__gte=now)[:10],
-        'past': own.filter(end__lt=now).order_by('-start')[:10],
-    })
+def coach_panel(request, pk):
+    """The side peek. A normal visit, e.g. an old bookmark, gets the list with it open."""
+    if not is_htmx(request):
+        return redirect(f"{reverse('coaches')}?coach={pk}")
+    return render(request, 'web/coaches/panel.html', details_context(pk))
 
 
 @role_required(MANAGER)
@@ -40,9 +52,14 @@ def coach_form(request, pk=None):
     instance = get_object_or_404(Coach, pk=pk) if pk else None
     form = CoachForm(request.POST or None, instance=instance)
     if form.is_valid():
-        form.save()
-        # A whole new page is simplest here: the list, or the coach's page.
-        return HttpResponse(headers={'HX-Refresh': 'true'})
+        saved = form.save()
+        if instance is None:
+            response = render(request, 'web/coaches/panel.html', details_context(saved.pk))
+            return htmx(response, trigger=['coachesChanged'], close_modal=True, retarget='#panel',
+                        push_url=f"{reverse('coaches')}?coach={saved.pk}")
+        response = render(request, 'web/coaches/details.html', details_context(saved.pk))
+        return htmx(response, trigger=['coachesChanged'], close_modal=True,
+                    retarget='#coach-details', reswap='outerHTML')
     return render(request, 'web/coaches/form.html', {
         'form': form, 'editing': instance is not None,
     })

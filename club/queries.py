@@ -15,11 +15,13 @@ FILTERS = ['coach', 'member', 'location', 'weapon']
 
 
 def classes():
-    """Classes with their headcounts: `member_count` and `present_count`."""
+    """Classes with their headcounts: `member_count` and `present_count`, earliest
+    first. The order_by is needed: Django leaves out the model's default ordering
+    when a query counts things."""
     return FencingClass.objects.select_related('coach').annotate(
         member_count=Count('attendance'),
         present_count=Count('attendance', filter=Q(attendance__status='present')),
-    )
+    ).order_by('start')
 
 
 def members():
@@ -39,7 +41,7 @@ def coaches():
     return Coach.objects.annotate(
         class_count=Count('classes'),
         next_class=Min('classes__start', filter=Q(classes__start__gte=timezone.now())),
-    ).select_related('profile__user')
+    ).select_related('profile__user').order_by('name')
 
 
 def locations():

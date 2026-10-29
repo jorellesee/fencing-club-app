@@ -19,7 +19,7 @@
     <dt>Primary coach</dt>
     <dd>
       {% if member.primary_coach %}
-        {% if request.role == 'manager' %}<a href="{% url 'coach' member.primary_coach_id %}">{{ member.primary_coach.name }}</a>{% else %}{{ member.primary_coach.name }}{% endif %}
+        {% if request.role == 'manager' %}<a href="{% url 'coaches' %}?coach={{ member.primary_coach_id }}">{{ member.primary_coach.name }}</a>{% else %}{{ member.primary_coach.name }}{% endif %}
       {% else %}<span class="muted">Empty</span>{% endif %}
     </dd>
     <dt>Email</dt>

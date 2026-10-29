@@ -1,14 +1,9 @@
-{% extends 'web/layout.html' %}
 {% load club %}
-{% block main %}
-<div class="page">
-  <div class="breadcrumbs"><a href="{% url 'coaches' %}">Coaches</a> / {{ coach.name }}</div>
+{# Inside the coach peek. Saving the Edit coach dialog replaces it. #}
+<div id="coach-details">
   <div class="avatar">{{ coach.name|first }}</div>
   <h1 class="page-title">{{ coach.name }}</h1>
-  <div class="toolbar">
-    <span></span>
-    <button class="button" hx-get="{% url 'coach_edit' coach.id %}" hx-target="#modal">Edit coach</button>
-  </div>
+  <button class="button" hx-get="{% url 'coach_edit' coach.id %}" hx-target="#modal">Edit coach</button>
 
   <dl class="properties">
     <dt>Classes</dt><dd>{{ coach.class_count }}</dd>
@@ -23,20 +18,17 @@
     {% include 'web/partials/login_row.html' with person=coach kind='coach' %}
   </dl>
 
-  <h2 class="section-title">Members they coach</h2>
+  <h3 class="section-title">Members they coach</h3>
   {% if members %}
-  <table class="table database">
-    <thead><tr><th>Name</th><th>Weapon</th><th>Status</th></tr></thead>
-    <tbody>
-      {% for member in members %}
-      <tr>
-        <td><a class="row-link strong" href="{% url 'members' %}?member={{ member.id }}">{{ member.name }}</a></td>
-        <td>{% weapon_tag member.weapon %}</td>
-        <td>{% active_tag member.active %}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  <ul class="attendance">
+    {% for member in members %}
+    <li>
+      <a class="row-link" href="{% url 'members' %}?member={{ member.id }}">{{ member.name }}</a>
+      {% weapon_tag member.weapon %}
+      {% if not member.active %}{% active_tag member.active %}{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
   {% else %}
   <p class="empty">No members have {{ coach.name }} as their primary coach.</p>
   {% endif %}
@@ -44,4 +36,3 @@
   {% include 'web/coaches/classes.html' with title='Upcoming classes' rows=upcoming empty='No upcoming classes.' %}
   {% include 'web/coaches/classes.html' with title='Recent classes' rows=past empty='No past classes.' %}
 </div>
-{% endblock %}

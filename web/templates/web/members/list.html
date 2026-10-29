@@ -15,16 +15,16 @@
         {% if members %}
         <table class="table database clickable">
           <thead>
-            <tr><th>Name</th><th>Weapon</th><th>Primary coach</th><th>Attendance</th><th>Last attended</th><th>Status</th></tr>
+            <tr><th>Name</th><th>Weapon</th><th class="hide-phone">Primary coach</th><th class="hide-phone">Attendance</th><th class="hide-phone">Last attended</th><th>Status</th></tr>
           </thead>
           <tbody>
             {% for member in members %}
             <tr hx-get="{% url 'member_panel' member.id %}" hx-target="#panel" :class="{ selected: selected == '{{ member.id }}' }">
               <td class="strong">{{ member.name }}</td>
               <td>{% weapon_tag member.weapon %}</td>
-              <td>{{ member.primary_coach.name|default:'' }}</td>
-              <td>{% rate_bar member %}</td>
-              <td class="muted">{{ member.last_present|date:"j M Y" }}</td>
+              <td class="hide-phone">{{ member.primary_coach.name|default:'' }}</td>
+              <td class="hide-phone">{% rate_bar member %}</td>
+              <td class="muted hide-phone">{{ member.last_present|date:"j M Y" }}</td>
               <td>{% active_tag member.active %}</td>
             </tr>
             {% endfor %}

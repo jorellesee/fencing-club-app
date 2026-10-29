@@ -1,7 +1,7 @@
 """Members: the manager's Members page with its side peek, and a member's My profile."""
 from django.core.exceptions import PermissionDenied
 from django.http import Http404
-from django.shortcuts import get_object_or_404, render
+from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_http_methods
 
@@ -10,7 +10,7 @@ from club.models import Member
 from club.roles import MANAGER, MEMBER, login_of
 
 from ..forms import MemberForm, OwnDetailsForm
-from .common import htmx, role_required
+from .common import htmx, is_htmx, role_required
 
 
 def details_context(request, pk):
@@ -39,6 +39,9 @@ def member_list(request):
 
 @role_required(MANAGER)
 def member_panel(request, pk):
+    """The side peek. A normal visit, e.g. an old bookmark, gets the list with it open."""
+    if not is_htmx(request):
+        return redirect(f"{reverse('members')}?member={pk}")
     return render(request, 'web/members/panel.html', details_context(request, pk))
 
 

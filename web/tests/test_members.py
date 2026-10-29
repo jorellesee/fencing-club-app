@@ -17,7 +17,7 @@ class RoleTests(ClubTestCase):
             self.client.force_login(user)
             for url in ['/members/', '/coaches/', f'/members/{self.alex.id}/',
                         f'/coaches/{self.lim.id}/', '/members/new/', '/coaches/new/']:
-                self.assertEqual(self.client.get(url).status_code, 403, url)
+                self.assertEqual(self.client.get(url, **HTMX).status_code, 403, url)
 
 
 class MemberTests(ClubTestCase):
@@ -27,6 +27,8 @@ class MemberTests(ClubTestCase):
 
     def test_members_page_opens_the_member_in_the_url(self):
         self.assertContains(self.client.get(f'/members/?member={self.alex.id}'), 'Edit member')
+        self.assertRedirects(self.client.get(f'/members/{self.alex.id}/'),
+                             f'/members/?member={self.alex.id}')
 
     def test_adding_a_member_opens_them(self):
         response = self.client.post('/members/new/', {'name': 'Bea', 'active': 'on'}, **HTMX)
@@ -81,15 +83,31 @@ class CoachTests(ClubTestCase):
         super().setUp()
         self.client.force_login(self.manager)
 
-    def test_coach_page(self):
-        response = self.client.get(f'/coaches/{self.lim.id}/')
+    def test_coaches_page_opens_the_coach_in_the_url(self):
+        response = self.client.get(f'/coaches/?coach={self.lim.id}')
+        self.assertContains(response, 'Edit coach')
         self.assertContains(response, 'Alex Tan')  # a member they coach
         self.assertContains(response, 'Junior Foil')  # an upcoming class
 
-    def test_adding_a_coach_refreshes_the_page(self):
+    def test_the_peek_on_its_own(self):
+        self.assertContains(self.client.get(f'/coaches/{self.lim.id}/', **HTMX), 'Edit coach')
+        # A normal visit, e.g. a bookmark, goes to the list with the peek open.
+        self.assertRedirects(self.client.get(f'/coaches/{self.lim.id}/'),
+                             f'/coaches/?coach={self.lim.id}')
+
+    def test_adding_a_coach_opens_them(self):
         response = self.client.post('/coaches/new/', {'name': 'Coach Ng', 'active': 'on'}, **HTMX)
-        self.assertEqual(response['HX-Refresh'], 'true')
-        self.assertTrue(Coach.objects.filter(name='Coach Ng').exists())
+        self.assertEqual(response['HX-Retarget'], '#panel')
+        self.assertContains(response, 'Coach Ng')
+        self.assertIn('?coach=', response['HX-Push-Url'])
+
+    def test_editing_a_coach_replaces_their_details(self):
+        response = self.client.post(f'/coaches/{self.lim.id}/edit/', {
+            'name': 'Coach Lim', 'phone': '9123 4567', 'active': 'on',
+        }, **HTMX)
+        self.assertEqual(response['HX-Retarget'], '#coach-details')
+        self.assertIn('coachesChanged', response['HX-Trigger'])
+        self.assertContains(response, '9123 4567')
 
     def test_coach_names_are_unique(self):
         response = self.client.post('/coaches/new/', {'name': 'Coach Lim'}, **HTMX)

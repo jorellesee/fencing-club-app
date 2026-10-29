@@ -2,26 +2,28 @@
 {% block body %}
 {% with name=request.resolver_match.url_name %}
 <div class="app">
+  {# A sidebar on a computer, a tab bar along the bottom on a phone. Tabs show the #}
+  {# shorter .nav-short label when there is one. #}
   <nav class="sidebar">
     <div class="workspace"><span class="workspace-icon">🤺</span>Fencing Club</div>
     {# One item for both views; the page itself switches between them. #}
     <a href="{% url 'calendar' %}" class="nav-item {% if name == 'calendar' or name == 'class_list' %}active{% endif %}">
-      <span class="nav-icon">📅</span>{% if request.role == 'manager' %}Classes{% else %}My classes{% endif %}
+      <span class="nav-icon">📅</span>{% if request.role == 'manager' %}<span class="nav-label">Classes</span>{% else %}<span class="nav-label">My classes</span><span class="nav-short">Classes</span>{% endif %}
     </a>
     {% if request.role == 'member' %}
-      <a href="{% url 'book' %}" class="nav-item {% if name == 'book' %}active{% endif %}"><span class="nav-icon">➕</span>Book a class</a>
-      <a href="{% url 'lessons' %}" class="nav-item {% if name == 'lessons' %}active{% endif %}"><span class="nav-icon">🎯</span>Private lessons</a>
-      <a href="{% url 'profile' %}" class="nav-item {% if name == 'profile' %}active{% endif %}"><span class="nav-icon">👤</span>My profile</a>
+      <a href="{% url 'book' %}" class="nav-item {% if name == 'book' %}active{% endif %}"><span class="nav-icon">➕</span><span class="nav-label">Book a class</span><span class="nav-short">Book</span></a>
+      <a href="{% url 'lessons' %}" class="nav-item {% if name == 'lessons' %}active{% endif %}"><span class="nav-icon">🎯</span><span class="nav-label">Private lessons</span><span class="nav-short">Lessons</span></a>
+      <a href="{% url 'profile' %}" class="nav-item {% if name == 'profile' %}active{% endif %}"><span class="nav-icon">👤</span><span class="nav-label">My profile</span><span class="nav-short">Profile</span></a>
     {% endif %}
     {% if request.role == 'manager' %}
-      <a href="{% url 'members' %}" class="nav-item {% if name == 'members' %}active{% endif %}"><span class="nav-icon">👥</span>Members</a>
-      <a href="{% url 'coaches' %}" class="nav-item {% if name == 'coaches' or name == 'coach' %}active{% endif %}"><span class="nav-icon">🧑‍🏫</span>Coaches</a>
+      <a href="{% url 'members' %}" class="nav-item {% if name == 'members' %}active{% endif %}"><span class="nav-icon">👥</span><span class="nav-label">Members</span></a>
+      <a href="{% url 'coaches' %}" class="nav-item {% if name == 'coaches' or name == 'coach' %}active{% endif %}"><span class="nav-icon">🧑‍🏫</span><span class="nav-label">Coaches</span></a>
     {% endif %}
     <div class="account">
       <div class="account-name">{{ user.get_username }}<span class="muted"> · {{ request.role|capfirst }}</span></div>
       <form method="post" action="{% url 'logout' %}">
         {% csrf_token %}
-        <button class="nav-item account-logout"><span class="nav-icon">↩</span>Log out</button>
+        <button class="nav-item account-logout"><span class="nav-icon">↩</span><span class="nav-label">Log out</span></button>
       </form>
     </div>
   </nav>

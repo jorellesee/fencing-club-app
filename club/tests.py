@@ -346,6 +346,10 @@ class QueryTests(TestCase):
         junior = queries.shown_classes(self.manager, {'member': self.alex.id}).get()
         self.assertEqual((junior.member_count, junior.present_count), (2, 1))
 
+    def test_classes_are_in_time_order(self):
+        early = FencingClass.objects.create(name='Early', start=at(19, 7), end=at(19, 8))
+        self.assertEqual(queries.shown_classes(self.manager, {})[0], early)
+
     def test_locations_lists_each_name_once(self):
         self.assertEqual(list(queries.locations()), ['Hall A', 'Hall B'])
 

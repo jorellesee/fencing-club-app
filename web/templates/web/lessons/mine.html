@@ -5,13 +5,13 @@
   <h2 class="section-title">My requests</h2>
   {% if current %}
   <table class="table database">
-    <thead><tr><th>When</th><th>Coach</th><th>Note</th><th>Status</th><th></th></tr></thead>
+    <thead><tr><th>When</th><th>Coach</th><th class="hide-phone">Note</th><th>Status</th><th></th></tr></thead>
     <tbody>
       {% for lesson in current %}
       <tr>
         <td class="muted">{{ lesson.start|date:"D j M, H:i" }}</td>
         <td>{{ lesson.coach.name }}</td>
-        <td class="muted">{{ lesson.note }}</td>
+        <td class="muted hide-phone">{{ lesson.note }}</td>
         <td>{% lesson_status lesson.status %}</td>
         <td class="row-actions">
           {% if lesson.status == 'pending' or lesson.status == 'accepted' %}

@@ -1,0 +1,5 @@
+{# A coach's side peek, on the Coaches page. #}
+<aside class="panel" x-init="selected = '{{ coach.id }}'" @keydown.escape.window="if (!document.querySelector('#modal .modal')) close()">
+  <button class="close" @click="close()" aria-label="Close">×</button>
+  {% include 'web/coaches/details.html' %}
+</aside>

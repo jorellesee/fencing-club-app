@@ -14,14 +14,53 @@ document.body.addEventListener('closeModal', closeModal)
 
 const FILTERS = ['coach', 'member', 'location', 'weapon']
 
-// A week from 8am to 10pm, like the club's timetable.
-const WEEK = {
-  initialView: 'timeGridWeek',
-  height: '100%',
-  slotMinTime: '08:00',
-  slotMaxTime: '22:00',
-  expandRows: true,
-  allDaySlot: false,
+// Below this width the app uses its phone layout. Keep in step with app.css.
+const phone = window.matchMedia('(max-width: 768px)')
+
+// From 8am to 10pm, like the club's timetable. A week on a computer. On a phone,
+// three days with hour-high rows, so the whole day fits on screen without scrolling.
+// `views` is the view switcher shown on a computer.
+function timetable(views = '') {
+  const base = {
+    height: '100%',
+    slotMinTime: '08:00',
+    slotMaxTime: '22:00',
+    expandRows: true,
+    allDaySlot: false,
+  }
+  if (!phone.matches) {
+    return {
+      ...base,
+      initialView: 'timeGridWeek',
+      headerToolbar: { start: 'prev,next today', center: 'title', end: views },
+    }
+  }
+  return {
+    ...base,
+    initialView: 'threeDays',
+    views: { threeDays: { type: 'timeGrid', duration: { days: 3 }, buttonText: '3 days' } },
+    headerToolbar: { start: 'title', center: '', end: 'today prev,next' },
+    titleFormat: { month: 'short', day: 'numeric' },
+    dayHeaderFormat: { weekday: 'short', day: 'numeric' },
+    slotDuration: '01:00',
+    snapDuration: '00:30',
+    longPressDelay: 300,
+  }
+}
+
+// Renders a FullCalendar, and rebuilds it on the same date whenever the window
+// crosses the phone breakpoint. Returns a function that gives the current one.
+function mountCalendar(el, options) {
+  let calendar
+  const mount = () => {
+    const date = calendar?.getDate()
+    calendar?.destroy()
+    calendar = new FullCalendar.Calendar(el, { ...options(), ...(date && { initialDate: date }) })
+    calendar.render()
+  }
+  mount()
+  phone.addEventListener('change', mount)
+  return () => calendar
 }
 
 // Fetches a JSON list of events for the dates FullCalendar is showing.
@@ -91,24 +130,22 @@ document.addEventListener('alpine:init', () => {
   // an empty time to make one. Clicking an event opens its panel with htmx.
   Alpine.data('classCalendar', ({ events, editable, moveUrl, newUrl }) => ({
     init() {
-      const calendar = new FullCalendar.Calendar(this.$el, {
-        ...WEEK,
-        headerToolbar: { start: 'prev,next today', center: 'title', end: 'timeGridWeek,timeGridDay' },
+      const calendar = mountCalendar(this.$el, () => ({
+        ...timetable('timeGridWeek,timeGridDay'),
         events: eventsFrom(events, () => new URLSearchParams(window.location.search)),
         editable,
         selectable: editable,
         eventDrop: save,
         eventResize: save,
         select(info) {
-          calendar.unselect()
+          calendar().unselect()
           const query = new URLSearchParams({ start: info.start.toISOString(), end: info.end.toISOString() })
           htmx.ajax('GET', `${newUrl}?${query}`, { target: '#modal' })
         },
         eventClick(info) {
           htmx.ajax('GET', info.event.extendedProps.panel, { target: '#panel' })
         },
-      })
-      calendar.render()
+      }))
 
       async function save(info) {
         const response = await fetch(moveUrl.replace('0', info.event.id), {
@@ -122,7 +159,7 @@ document.addEventListener('alpine:init', () => {
         if (!response.ok) info.revert()
       }
 
-      const refetch = () => calendar.refetchEvents()
+      const refetch = () => calendar().refetchEvents()
       document.body.addEventListener('classesChanged', refetch)
       window.addEventListener('filters-changed', refetch)
     },
@@ -135,24 +172,22 @@ document.addEventListener('alpine:init', () => {
 
     init() {
       this.coach = this.$refs.coach.value
-      const calendar = new FullCalendar.Calendar(this.$refs.calendar, {
-        ...WEEK,
-        headerToolbar: { start: 'prev,next today', center: 'title', end: '' },
+      const calendar = mountCalendar(this.$refs.calendar, () => ({
+        ...timetable(),
         events: eventsFrom(events, () => new URLSearchParams({ coach: this.coach })),
         selectable: true,
         selectOverlap: false,
         selectAllow: (info) => info.start > new Date(),
         select: (info) => {
-          calendar.unselect()
+          calendar().unselect()
           const query = new URLSearchParams({
             coach: this.coach, start: info.start.toISOString(), end: info.end.toISOString(),
           })
           htmx.ajax('GET', `${newUrl}?${query}`, { target: '#modal' })
         },
-      })
-      calendar.render()
-      this.$watch('coach', () => calendar.refetchEvents())
-      document.body.addEventListener('lessonsChanged', () => calendar.refetchEvents())
+      }))
+      this.$watch('coach', () => calendar().refetchEvents())
+      document.body.addEventListener('lessonsChanged', () => calendar().refetchEvents())
     },
   }))
 })
