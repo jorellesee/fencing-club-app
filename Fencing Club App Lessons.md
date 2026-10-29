@@ -3302,6 +3302,58 @@ git branch -d coach-calendar          # -d refuses if it isn't merged yet
 
 ---
 
+# Lesson 26: Syncing classes to Google Calendar
+
+**Goal:** let anyone see their classes in Google Calendar by subscribing to a secret link, without OAuth or Google API keys. Claude built this one, in a parallel worktree (Lesson 25).
+
+## What changed
+
+| Where | What |
+| --- | --- |
+| `club/models.py` | `CalendarFeed`: one secret `token` per user, with `reset()` to swap it for a new one. Its own model because managers have no `Profile` |
+| `club/migrations/0011_calendarfeed.py` | Creates the table |
+| `club/ical.py` (new) | Turns classes into iCalendar text: escaping, UTC times, line folding, CRLF |
+| `club/queries.py` | `feed_classes(user)`: the classes on their calendar, from 60 days ago onwards |
+| `web/views/feeds.py` (new) | The Calendar sync page, Reset link, and the public `.ics` feed |
+| `web/urls.py` | `calendar-sync/`, `calendar-sync/reset/`, `calendar/<token>.ics` |
+| `web/templates/web/feeds/` (new) | The page, and the link box that Reset swaps out |
+| `web/templates/web/layout.html` | A Calendar sync item in the sidebar for every role ("Sync" in the phone tab bar) |
+| `web/tests/test_feeds.py` (new) | Tokens, who sees what, reset, escaping and folding |
+
+## Key ideas
+
+### Subscribe, don't sync
+
+Writing into someone's Google Calendar would need OAuth, Google credentials and outbound requests, and PythonAnywhere's free tier blocks most outbound requests. Instead the app *publishes* an `.ics` file at a URL, and Google *pulls* it (Other calendars → From URL). Nothing leaves our server. The catch: Google decides when to fetch again, every few hours and sometimes up to a day, so changes aren't instant.
+
+### A secret URL instead of a login
+
+Google fetches the feed anonymously, so `calendar_feed` has no `@role_required`. The long random token (`secrets.token_urlsafe(32)`) is the password. Anyone holding the URL can read the calendar, so **Reset link** saves a new token, and the old URL returns 404 straight away. Reset is a POST with CSRF protection, because it changes data.
+
+### Reusing "who sees what"
+
+The feed doesn't write its own filters. It calls `queries.shown_classes(user, {})`, the same function behind the calendar page, so a member's feed can't contain someone else's private lesson. One extra guard: a login with no role, or a switched-off one, gets a 404, because `shown_classes` returns everything for a user without a role.
+
+### The .ics format (RFC 5545)
+
+Plain text inside `BEGIN:VCALENDAR` … `END:VCALENDAR`, with one `VEVENT` per class. The rules that bite:
+
+- Lines end with `\r\n`, not just `\n`.
+- `,` `;` `\` and newlines inside text are escaped (`\,` `\;` `\\` `\n`).
+- Lines over 75 *bytes* fold onto the next line, which starts with a space. Count bytes, not characters ("é" is 2), and never split a character.
+- Times are written in UTC with a `Z` (`20261106T020000Z`), so the file needs no time zone definitions.
+- Each event's `UID` (`class-42@yourhost`) stays the same between fetches, so Google updates the event instead of adding a copy.
+
+### A partial for htmx to swap
+
+`link.html` is the box with the URL and buttons. The page includes it, and Reset link returns just that box (`hx-target="#feed-link" hx-swap="outerHTML"`), so the new URL appears without a reload. Copy is Alpine only: `navigator.clipboard.writeText(...)` and a `copied` flag that changes the button text for two seconds.
+
+## Putting it online
+
+After pulling on PythonAnywhere, run `python manage.py migrate` and reload. Then the link on the Calendar sync page works in Google Calendar under **Other calendars → + → From URL**. Locally, Google can't reach `localhost`, so open the link in a browser tab, or import the file instead.
+
+---
+
 # Check your understanding: questions and answers
 
 <details>

@@ -4,6 +4,8 @@ so a page can't show something these rules hide.
 `user` is the logged-in user. Managers see everything, coaches the club's classes
 (their calendar shows only their own), and members only what's theirs.
 """
+from datetime import timedelta
+
 from django.db.models import Count, Max, Min, Q
 from django.utils import timezone
 
@@ -106,6 +108,13 @@ def shown_classes(user, filters):
     if filters.get('weapon'):
         queryset = queryset.filter(weapon=filters['weapon'])
     return queryset
+
+
+def feed_classes(user):
+    """What someone's calendar feed shows: what their calendar does, with no
+    filters, from two months ago onwards."""
+    since = timezone.now() - timedelta(days=60)
+    return shown_classes(user, {}).filter(start__gte=since)
 
 
 def can_edit_class(user, fencing_class):

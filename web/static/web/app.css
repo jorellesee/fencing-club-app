@@ -910,6 +910,32 @@ input[type="date"] {
   height: 100%;
 }
 
+/* Calendar sync: the secret link, and how to add it */
+.feed-url {
+  padding: 6px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--sidebar-bg);
+  color: var(--text-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+}
+
+.feed-link .hint {
+  margin: 8px 0 0;
+}
+
+.feed-actions {
+  align-items: center;
+  margin-top: 8px;
+}
+
+.steps {
+  margin: 0 0 12px;
+  padding-left: 20px;
+  line-height: 1.8;
+}
+
 /* Phones, and narrow windows. The sidebar becomes a tab bar along the bottom, peeks
    and dialogs fill the screen, and tables drop their less important columns. */
 

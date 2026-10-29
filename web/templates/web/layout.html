@@ -19,6 +19,7 @@
       <a href="{% url 'members' %}" class="nav-item {% if name == 'members' %}active{% endif %}"><span class="nav-icon">👥</span><span class="nav-label">Members</span></a>
       <a href="{% url 'coaches' %}" class="nav-item {% if name == 'coaches' or name == 'coach' %}active{% endif %}"><span class="nav-icon">🧑‍🏫</span><span class="nav-label">Coaches</span></a>
     {% endif %}
+    <a href="{% url 'calendar_sync' %}" class="nav-item {% if name == 'calendar_sync' %}active{% endif %}"><span class="nav-icon">🔄</span><span class="nav-label">Calendar sync</span><span class="nav-short">Sync</span></a>
     <div class="account">
       <div class="account-name">{{ user.get_username }}<span class="muted"> · {{ request.role|capfirst }}</span></div>
       <form method="post" action="{% url 'logout' %}">
