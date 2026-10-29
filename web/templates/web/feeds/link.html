@@ -1,0 +1,15 @@
+{# The secret link, with Copy and Reset link. Resetting replaces this with the new link. #}
+<div id="feed-link" class="feed-link" x-data="{ copied: false }">
+  <div class="input-with-button">
+    <input class="feed-url" x-ref="url" value="{{ feed_url }}" readonly @focus="$el.select()" aria-label="Your calendar link">
+    <button type="button" class="button primary"
+            @click="navigator.clipboard.writeText($refs.url.value); copied = true; setTimeout(() => copied = false, 2000)"
+            x-text="copied ? 'Copied' : 'Copy'">Copy</button>
+  </div>
+  <p class="hint">Anyone with this link can see these classes. If it gets out, reset it and add the new one.</p>
+  <div class="row-actions feed-actions">
+    {% if notice %}<span class="muted">{{ notice }}</span>{% endif %}
+    <button type="button" class="danger" hx-post="{% url 'calendar_feed_reset' %}" hx-target="#feed-link" hx-swap="outerHTML"
+            hx-confirm="Make a new link? Calendars using the old one will stop updating.">Reset link</button>
+  </div>
+</div>

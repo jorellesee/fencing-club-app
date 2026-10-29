@@ -1,0 +1,20 @@
+{% extends 'web/layout.html' %}
+{% block main %}
+<div class="page">
+  <h1 class="page-title"><span class="page-icon">🔄</span>Calendar sync</h1>
+  <p class="page-description">
+    See {% if request.role == 'manager' %}every class{% else %}your classes{% endif %} in Google Calendar,
+    or any calendar app that can subscribe to a link. It’s read-only: changes are made here.
+  </p>
+
+  {% include 'web/feeds/link.html' %}
+
+  <h3 class="section-title">Add it to Google Calendar</h3>
+  <ol class="steps">
+    <li>Copy your link above.</li>
+    <li>On a computer, open Google Calendar. Next to <strong>Other calendars</strong>, click <strong>+</strong>, then <strong>From URL</strong>.</li>
+    <li>Paste the link and click <strong>Add calendar</strong>. It shows on your phone too.</li>
+  </ol>
+  <p class="hint">Google checks the link every few hours, so changes here can take a while to appear there.</p>
+</div>
+{% endblock %}

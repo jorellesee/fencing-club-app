@@ -1,6 +1,6 @@
 from django.urls import path
 
-from .views import auth, book, classes, coaches, lessons, members
+from .views import auth, book, classes, coaches, feeds, lessons, members
 
 urlpatterns = [
     path('login/', auth.login_view, name='login'),
@@ -26,6 +26,11 @@ urlpatterns = [
     path('attendance/<int:pk>/remove/', classes.remove_from_class, name='attendance_remove'),
     path('lesson-requests/<int:pk>/', lessons.request_panel, name='lesson_request_panel'),
     path('lesson-requests/<int:pk>/<verb>/', lessons.answer, name='lesson_request_answer'),
+
+    # Calendar sync, for everyone. The feed itself needs no login: its token is the key.
+    path('calendar-sync/', feeds.calendar_sync, name='calendar_sync'),
+    path('calendar-sync/reset/', feeds.reset_feed, name='calendar_feed_reset'),
+    path('calendar/<str:token>.ics', feeds.calendar_feed, name='calendar_feed'),
 
     # A member's own pages.
     path('book/', book.book, name='book'),

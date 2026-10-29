@@ -1,3 +1,5 @@
+import secrets
+
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
@@ -146,3 +148,25 @@ class LessonRequest(models.Model):
 
     def __str__(self):
         return f'{self.member} with {self.coach} ({self.start:%a %d %b %H:%M}): {self.status}'
+
+
+def new_feed_token():
+    return secrets.token_urlsafe(32)
+
+
+class CalendarFeed(models.Model):
+    """The secret in someone's calendar feed URL. Google Calendar fetches the feed
+    without logging in, so knowing the token is what lets it in. Resetting it gives
+    a new URL, and the old one stops working."""
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='calendar_feed'
+    )
+    token = models.CharField(max_length=64, unique=True, default=new_feed_token)
+
+    def reset(self):
+        self.token = new_feed_token()
+        self.save(update_fields=['token'])
+
+    def __str__(self):
+        return f'Calendar feed for {self.user}'
