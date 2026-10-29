@@ -1,0 +1,16 @@
+{% extends 'web/layout.html' %}
+{% block main %}
+<div class="calendar-page" x-data="peek()">
+  <div class="calendar" x-data="filters({{ filters_json }})">
+    {% include 'web/classes/header.html' %}
+    <div class="calendar-body"
+         x-data="classCalendar({
+           events: '{% url 'calendar_events' %}',
+           editable: {% if request.role == 'manager' %}true{% else %}false{% endif %},
+           moveUrl: '{% url 'class_move' 0 %}',
+           newUrl: '{% url 'class_new' %}',
+         })"></div>
+  </div>
+  <div id="panel"></div>
+</div>
+{% endblock %}

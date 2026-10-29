@@ -3113,6 +3113,70 @@ To deploy on PythonAnywhere (Lesson 15), skip the steps about building React and
 
 ---
 
+# Lesson 23: One Django project, organised by job (branch `htmx-frontend`)
+
+**Goal:** with React gone, stop pretending there's a backend and a frontend. The repo is now one Django project, the JSON API is gone, and the code is grouped by what it does. Claude built this one.
+
+## What changed
+
+| Where | What |
+| --- | --- |
+| `backend/` | Gone. `manage.py`, `requirements.txt`, `config/`, `club/` and `web/` are at the top of the repo, and so are `db.sqlite3` and `.venv` |
+| The JSON API | Deleted: `club/views.py`, `club/urls.py`, `club/serializers.py`, `club/permissions.py`, and `djangorestframework` from `requirements.txt`. git still has it on `main` |
+| `club/roles.py` (new) | `role_of()` and login status, which used to live beside DRF's permission class |
+| `club/queries.py` (new) | Who can see what: `visible_classes(user)`, `shown_classes(user, filters)`, `can_edit_class(user, c)` and friends. These used to be inside the views |
+| `club/tests.py` | Rewritten to test models, `services` and `queries` directly. The rules the API tests checked are kept here |
+| `web/views.py` → `web/views/` | One module per sidebar area: `auth`, `classes`, `book`, `lessons`, `members`, `coaches`, plus `common` for `role_required` and `htmx()` |
+| `web/templates/web/` | Grouped the same way: `classes/`, `lessons/`, `members/`… and `partials/` for pieces many pages use (`field.html`, `modal.html`) |
+| `web/tests.py` → `web/tests/` | One file per area, testing the pages and who may use them |
+| `club/emails.py` | Invite and reset links now end in `/` |
+
+## Key ideas
+
+### Three layers, three questions
+
+- **`club/queries.py`: what may this person see?** `visible_classes(user)` is the only place that says a member can open their own classes and ones they could book. Every view that loads a class goes through it, so a new page can't forget the rule.
+- **`club/services.py`: what happens when they act?** Enrolling checks capacity and start time. Accepting a lesson makes a one-person class. These raise `ValidationError` with a message to show.
+- **`web/views/`: which HTML goes back?** Views are now mostly "ask queries, call a service, render a template, add htmx headers".
+
+`club` doesn't import anything from `web`. That's the boundary to keep: if you ever add an API or a phone app again, it would sit beside `web` and use the same `club`.
+
+### Testing rules without HTTP
+
+`club/tests.py` calls `services.enrol(member, fencing_class)` directly instead of posting to a URL. Those tests are shorter and faster, and they say exactly which rule they check. `web/tests/` then only has to check the parts that are about pages: the right template, the right htmx headers, and 403s for the wrong role.
+
+## Moving the PythonAnywhere site
+
+Do these once, in this order, after pushing the branch and merging it into `main`:
+
+1. **Bash console:**
+    ```bash
+    cd ~/fencing-club-app
+    git pull
+    mv backend/db.sqlite3 db.sqlite3     # git doesn't move files it doesn't track
+    workon fencing
+    pip install -r requirements.txt
+    python manage.py migrate
+    python manage.py collectstatic --noinput
+    rm -rf backend frontend               # only old, untracked files are left in them
+    ```
+2. **Web tab:** change **Source code** and **Working directory** to `/home/<username>/fencing-club-app` (no `/backend`).
+3. **WSGI file:** change the `path = ...` line to `/home/<username>/fencing-club-app`.
+4. **Reload**, then log in to check.
+
+If you use the backup step from Lesson 15, the database is now at `~/fencing-club-app/db.sqlite3`.
+
+## Running it locally
+
+```bash
+cd ~/Projects/fencing_club_app
+source .venv/bin/activate
+python manage.py test        # 98 tests
+python manage.py runserver
+```
+
+---
+
 # Check your understanding: questions and answers
 
 <details>

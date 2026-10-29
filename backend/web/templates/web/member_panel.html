@@ -1,5 +1,0 @@
-{# A member's side peek, on the Members page. #}
-<aside class="panel" x-init="selected = '{{ member.id }}'" @keydown.escape.window="if (!document.querySelector('#modal .modal')) close()">
-  <button class="close" @click="close()" aria-label="Close">×</button>
-  {% include 'web/member_details.html' %}
-</aside>

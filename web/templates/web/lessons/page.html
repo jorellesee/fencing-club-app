@@ -1,0 +1,24 @@
+{% extends 'web/layout.html' %}
+{% block main %}
+<div class="page page-wide">
+  <h1 class="page-title"><span class="page-icon">🎯</span>Private lessons</h1>
+  <p class="page-description">
+    Pick a coach, then drag across a free time to ask for a lesson. Grey times are when
+    they’re already booked. Your coach accepts or declines.
+  </p>
+  {% if coach_options %}
+  <div x-data="lessonCalendar({ events: '{% url 'lesson_events' %}', newUrl: '{% url 'lesson_new' %}' })">
+    <div class="toolbar">
+      <select class="filter" x-ref="coach" x-model="coach">
+        {% for coach in coach_options %}<option value="{{ coach.id }}">{{ coach.name }}</option>{% endfor %}
+      </select>
+      <span></span>
+    </div>
+    <div class="lesson-calendar"><div class="calendar-fill" x-ref="calendar"></div></div>
+  </div>
+  {% elif not error %}
+  <p class="empty">You can ask your primary coach, or the coach of a class you’re on. Ask a manager to set your primary coach.</p>
+  {% endif %}
+  {% include 'web/lessons/mine.html' %}
+</div>
+{% endblock %}

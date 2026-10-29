@@ -1,0 +1,17 @@
+{% extends 'web/partials/modal.html' %}
+{% block title %}Ask {{ coach.name }} for a lesson{% endblock %}
+{% block content %}
+<form class="form" hx-post="{{ request.get_full_path }}" hx-target="#modal">
+  <div class="form-row">
+    {% include 'web/partials/field.html' with field=form.date %}
+    {% include 'web/partials/field.html' with field=form.start_time %}
+    {% include 'web/partials/field.html' with field=form.end_time %}
+  </div>
+  {% include 'web/partials/field.html' with field=form.note %}
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  <div class="form-actions">
+    <button type="button" class="button" @click="closeModal()">Cancel</button>
+    <button class="button primary">Send request</button>
+  </div>
+</form>
+{% endblock %}
