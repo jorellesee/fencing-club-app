@@ -10,11 +10,17 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
+import atexit
+import logging
 import os
 from pathlib import Path
 
+from django.core.exceptions import ImproperlyConfigured
+from dotenv import load_dotenv
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / '.env')
 
 
 # Locally nothing needs setting. Online, Render's environment variables switch
@@ -22,6 +28,53 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 DEBUG = os.environ.get('DJANGO_DEBUG', 'true').lower() == 'true'
+
+POSTHOG_PROJECT_TOKEN = os.environ.get('POSTHOG_PROJECT_TOKEN')
+POSTHOG_HOST = os.environ.get('POSTHOG_HOST')
+POSTHOG_MW_CLIENT = None
+
+if not POSTHOG_PROJECT_TOKEN or not POSTHOG_HOST:
+    if DEBUG:
+        missing_variable = (
+            'POSTHOG_PROJECT_TOKEN'
+            if not POSTHOG_PROJECT_TOKEN
+            else 'POSTHOG_HOST'
+        )
+        raise ImproperlyConfigured(
+            f'{missing_variable} variable required by PostHog is missing or '
+            f'un-configured, this causes events to be silently missed. This error '
+            f'stops appearing once {missing_variable} is configured'
+        )
+else:
+    from posthog import Posthog
+
+    POSTHOG_MW_CLIENT = Posthog(
+        project_api_key=POSTHOG_PROJECT_TOKEN,
+        host=POSTHOG_HOST,
+        enable_exception_autocapture=True,
+    )
+    atexit.register(POSTHOG_MW_CLIENT.shutdown)
+
+    from opentelemetry._logs import set_logger_provider
+    from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
+    from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+    from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+
+    POSTHOG_LOGGER = logging.getLogger('posthog.export')
+    POSTHOG_LOGGER.setLevel(logging.INFO)
+    POSTHOG_LOGGER.propagate = False
+    POSTHOG_LOGGER_PROVIDER = LoggerProvider()
+    set_logger_provider(POSTHOG_LOGGER_PROVIDER)
+    POSTHOG_LOGGER_PROVIDER.add_log_record_processor(
+        BatchLogRecordProcessor(
+            OTLPLogExporter(
+                endpoint=f'{POSTHOG_HOST.rstrip("/")}/i/v1/logs',
+                headers={'Authorization': f'Bearer {POSTHOG_PROJECT_TOKEN}'},
+            )
+        )
+    )
+    POSTHOG_LOGGER.addHandler(LoggingHandler(logger_provider=POSTHOG_LOGGER_PROVIDER))
+    atexit.register(POSTHOG_LOGGER_PROVIDER.shutdown)
 
 if DEBUG:
     SECRET_KEY = os.environ.get(
@@ -52,7 +105,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'club',
-    'web',
+    'web.apps.WebConfig',
 ]
 
 MIDDLEWARE = [
@@ -62,6 +115,11 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    *(
+        ['posthog.integrations.django.PosthogContextMiddleware']
+        if POSTHOG_MW_CLIENT
+        else []
+    ),
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]

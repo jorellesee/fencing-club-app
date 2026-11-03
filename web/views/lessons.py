@@ -2,6 +2,7 @@
 opens from the calendar for the coach, a manager, or the member who asked.
 
 A lesson is an individual TrainingSession. A request is one that's unconfirmed."""
+from django.conf import settings
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, render
@@ -14,6 +15,7 @@ from club.models import Coach
 from club.roles import MEMBER
 
 from ..forms import LessonRequestForm
+from ..posthog_logs import logger as posthog_logger
 from .sessions import panel
 from .common import EVERYONE, htmx, is_htmx, parse_range, role_required, when
 
@@ -44,6 +46,15 @@ def answer(request, pk, verb):
         }[verb](lesson)
     except ValidationError as error:
         return request_panel(request, pk, error=services.error_text(error))
+    if settings.POSTHOG_MW_CLIENT:
+        settings.POSTHOG_MW_CLIENT.capture({
+            'accept': 'lesson_request_accepted',
+            'decline': 'lesson_request_declined',
+            'cancel': 'lesson_cancelled',
+        }[verb], properties={
+            'lesson_id': lesson.pk,
+            'actor_role': request.role,
+        })
     if verb == 'accept':
         # Open it as a session now, ready to mark.
         return panel(request, lesson.pk, trigger=['sessionsChanged'])
@@ -116,6 +127,15 @@ def request_lesson(request):
         except ValidationError as err:
             error = services.error_text(err)
         else:
+            if settings.POSTHOG_MW_CLIENT:
+                settings.POSTHOG_MW_CLIENT.capture('lesson_requested', properties={
+                    'lesson_id': lesson.pk,
+                })
+            posthog_logger.info('lesson request created', extra={
+                'event': 'lesson_requested',
+                'lesson_id': lesson.pk,
+                'lesson_status': lesson.status,
+            })
             message = f'Asked {coach.name} for {when(lesson.start)}. It’s unconfirmed until they reply.'
             return htmx(lessons(request, message=message), trigger=['lessonsChanged'],
                         close_modal=True, retarget='#my-lessons', reswap='outerHTML')
@@ -132,5 +152,10 @@ def cancel_lesson(request, pk):
         services.cancel_lesson(lesson)
     except ValidationError as error:
         return lessons(request, error=services.error_text(error))
+    if settings.POSTHOG_MW_CLIENT:
+        settings.POSTHOG_MW_CLIENT.capture('lesson_cancelled', properties={
+            'lesson_id': lesson.pk,
+            'actor_role': request.role,
+        })
     return htmx(lessons(request, message=f'Cancelled your lesson on {when(lesson.start)}.'),
                 trigger=['lessonsChanged'])

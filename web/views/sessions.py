@@ -1,6 +1,7 @@
 """The Sessions page: the calendar, the list, and a session's side panel."""
 import json
 
+from django.conf import settings
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, render
@@ -14,6 +15,7 @@ from club.models import Attendance, Coach, Member, TrainingSession
 from club.roles import COACH, MANAGER, MEMBER
 
 from ..forms import RepeatForm, SessionForm
+from ..posthog_logs import logger as posthog_logger
 from .common import EVERYONE, htmx, parse_range, role_required
 from .members import details
 
@@ -106,6 +108,11 @@ def move_session(request, pk):
         return HttpResponse('End must be after start.', status=400)
     session.start, session.end = start, end
     session.save(update_fields=['start', 'end'])
+    if settings.POSTHOG_MW_CLIENT:
+        settings.POSTHOG_MW_CLIENT.capture('session_moved', properties={
+            'session_id': session.pk,
+            'session_category': session.category,
+        })
     return HttpResponse(status=204)
 
 
@@ -147,10 +154,28 @@ def session_form(request, pk=None):
     form = SessionForm(request.POST or None, instance=instance, start=start, end=end)
     if form.is_valid():
         saved = form.save()
-        if form.cleaned_data.get('apply_to_following'):
+        apply_to_following = form.cleaned_data.get('apply_to_following', False)
+        if apply_to_following:
             services.following(saved).update(
                 **{field: form.cleaned_data[field] for field in services.SERIES_FIELDS}
             )
+        if settings.POSTHOG_MW_CLIENT:
+            settings.POSTHOG_MW_CLIENT.capture(
+                'session_created' if instance is None else 'session_updated', properties={
+                    'session_id': saved.pk,
+                    'session_category': saved.category,
+                    'session_weapon': saved.weapon,
+                    'capacity_configured': saved.capacity is not None,
+                    'apply_to_following': apply_to_following,
+                }
+            )
+        posthog_logger.info('session saved', extra={
+            'event': 'session_created' if instance is None else 'session_updated',
+            'session_id': saved.pk,
+            'session_category': saved.category,
+            'capacity_configured': saved.capacity is not None,
+            'apply_to_following': apply_to_following,
+        })
         return htmx(panel(request, saved.pk), trigger=['sessionsChanged'], close_modal=True,
                     retarget='#panel')
     return render(request, 'web/sessions/form.html', {
@@ -199,6 +224,11 @@ def set_status(request, pk):
         return HttpResponse(status=400)
     row.status = status
     row.save(update_fields=['status'])
+    if settings.POSTHOG_MW_CLIENT:
+        settings.POSTHOG_MW_CLIENT.capture('attendance_status_updated', properties={
+            'session_id': row.session_id,
+            'attendance_status': status,
+        })
     if request.GET.get('from') == 'member':
         return details(request, row.member_id, trigger=['membersChanged'])
     return panel(request, row.session_id, trigger=['sessionsChanged'])
@@ -232,10 +262,18 @@ def enrol(request, pk):
     try:
         if request.POST.get('enrolled') == '1':
             services.enrol(services.own_member(request.user), session)
+            enrollment_action = 'enrolled'
         else:
             services.unenrol(request.user, session)
+            enrollment_action = 'cancelled'
     except ValidationError as error:
         message = services.error_text(error)
+    else:
+        if settings.POSTHOG_MW_CLIENT:
+            settings.POSTHOG_MW_CLIENT.capture('session_enrollment_updated', properties={
+                'session_id': session.pk,
+                'enrollment_action': enrollment_action,
+            })
     return panel(request, pk, message=message, trigger=['sessionsChanged'])
 
 
@@ -250,6 +288,11 @@ def repeat(request, pk):
         created = services.repeat_weekly(session, form.cleaned_data['until'])
     except ValidationError as error:
         return panel(request, pk, message=services.error_text(error))
+    if settings.POSTHOG_MW_CLIENT:
+        settings.POSTHOG_MW_CLIENT.capture('session_series_repeated', properties={
+            'session_id': session.pk,
+            'sessions_created': created,
+        })
     return panel(request, pk, message=f'Added {created} more sessions.', trigger=['sessionsChanged'])
 
 
@@ -259,8 +302,15 @@ def delete_session(request, pk):
     """Deletes the session, or with following=1, it and the later ones in its series.
     The empty response clears the panel."""
     session = get_object_or_404(queries.sessions(), pk=pk)
-    if request.POST.get('following'):
+    session_id = session.pk
+    following = bool(request.POST.get('following'))
+    if following:
         services.following(session).delete()
     else:
         session.delete()
+    if settings.POSTHOG_MW_CLIENT:
+        settings.POSTHOG_MW_CLIENT.capture('session_deleted', properties={
+            'session_id': session_id,
+            'including_following_sessions': following,
+        })
     return htmx(HttpResponse(), trigger=['sessionsChanged'])

@@ -1,5 +1,6 @@
 """Logging in and out, and choosing a password from an emailed link."""
 from django.contrib.auth import authenticate, login, logout
+from django.conf import settings
 from django.contrib.auth.models import User
 from django.shortcuts import redirect, render
 from django.views.decorators.http import require_http_methods, require_POST
@@ -27,6 +28,8 @@ def login_view(request):
                 error = 'Wrong username or password.'
             else:
                 login(request, user)
+                if settings.POSTHOG_MW_CLIENT:
+                    settings.POSTHOG_MW_CLIENT.capture('user_logged_in')
                 next_url = request.GET.get('next', '')
                 # Only paths on this site, so a link can't send someone elsewhere.
                 safe = next_url.startswith('/') and not next_url.startswith('//')
@@ -36,6 +39,8 @@ def login_view(request):
 
 @require_POST
 def logout_view(request):
+    if settings.POSTHOG_MW_CLIENT:
+        settings.POSTHOG_MW_CLIENT.capture('user_logged_out')
     logout(request)
     return redirect('login')
 
@@ -65,6 +70,10 @@ def set_password(request, uidb64, token):
     if form.is_valid():
         form.save()
         login(request, user, backend='django.contrib.auth.backends.ModelBackend')
+        if settings.POSTHOG_MW_CLIENT:
+            settings.POSTHOG_MW_CLIENT.capture('user_logged_in', properties={
+                'login_method': 'password_setup',
+            })
         return redirect('calendar')
     return render(request, 'web/auth/set_password.html', {
         'form': form,
