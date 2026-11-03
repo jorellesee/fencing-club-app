@@ -17,7 +17,7 @@ def details_context(request, pk):
     member = get_object_or_404(queries.visible_members(request.user), pk=pk)
     history = queries.history(member)
     for row in history:
-        row.editable = queries.can_edit_class(request.user, row.fencing_class)
+        row.editable = queries.can_edit_session(request.user, row.session)
     return {'member': member, 'history': history, 'login': login_of(member)}
 
 

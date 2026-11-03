@@ -5,7 +5,7 @@ from django.contrib.auth.forms import SetPasswordForm
 from django.db.models import Q
 from django.utils import timezone
 
-from club.models import Coach, FencingClass, Member
+from club.models import Coach, Member, TrainingSession
 from club.services import lesson_time_errors
 
 
@@ -43,33 +43,34 @@ class TimesMixin:
         return data
 
 
-class ClassForm(TimesMixin, forms.ModelForm):
+class SessionForm(TimesMixin, forms.ModelForm):
     date = forms.DateField(widget=DateInput)
     start_time = forms.TimeField(label='Start', widget=TimeInput)
     end_time = forms.TimeField(label='End', widget=TimeInput)
     weapon = forms.ChoiceField(
-        choices=[('', 'None'), *FencingClass.Weapon.choices], required=False
+        choices=[('', 'None'), *TrainingSession.Weapon.choices], required=False
     )
     apply_to_following = forms.BooleanField(
         required=False,
-        label='Also change the name, weapon, location, coach and capacity of all '
-              'following classes in this weekly series',
+        label='Also change the name, category, weapon, location, coach and capacity '
+              'of all following sessions in this weekly series',
     )
 
     class Meta:
-        model = FencingClass
-        fields = ['name', 'weapon', 'location', 'coach', 'capacity', 'notes']
+        model = TrainingSession
+        fields = ['name', 'category', 'weapon', 'location', 'coach', 'capacity', 'notes']
         widgets = {
             'location': forms.TextInput(attrs={'list': 'location-options'}),
             'capacity': forms.NumberInput(attrs={'min': 1}),
         }
+        help_texts = {'capacity': 'Blank for no limit. 1 makes it a private lesson.'}
 
     def __init__(self, *args, start=None, end=None, **kwargs):
         super().__init__(*args, **kwargs)
         if self.instance.pk:
             start, end = self.instance.start, self.instance.end
         elif not (start and end):
-            # Suggest an hour-long class starting at the next full hour.
+            # Suggest an hour-long session starting at the next full hour.
             start = timezone.now().replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
             end = start + timedelta(hours=1)
         start, end = timezone.localtime(start), timezone.localtime(end)

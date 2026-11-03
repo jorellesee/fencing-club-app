@@ -1,5 +1,5 @@
-"""The club's rules: what happens when someone enrols, repeats a class, asks for a
-lesson and so on. The pages in web/ call these, and nothing here knows about HTTP.
+"""The club's rules: what happens when someone enrols, repeats a session, asks for
+a lesson and so on. The pages in web/ call these, and nothing here knows about HTTP.
 
 Each function raises Django's ValidationError when a rule says no, with a message
 that can be shown to the person as it is.
@@ -15,8 +15,11 @@ from django.db.models import Q
 from django.utils import timezone
 
 from .emails import display_name, send_invite
-from .models import Attendance, Coach, FencingClass, LessonRequest, Profile
+from .models import Attendance, Coach, Profile, TrainingSession
 from .roles import MEMBER, role_of
+
+CONFIRMED = TrainingSession.Status.CONFIRMED
+UNCONFIRMED = TrainingSession.Status.UNCONFIRMED
 
 
 def own_member(user):
@@ -27,61 +30,64 @@ def own_member(user):
     return member
 
 
-# Classes
+# Sessions
 
-def enrol(member, fencing_class):
-    if fencing_class.start <= timezone.now():
-        raise ValidationError('This class has already started.')
+def enrol(member, session):
+    if session.start <= timezone.now():
+        raise ValidationError('This session has already started.')
     with transaction.atomic():
-        if fencing_class.attendance.filter(member=member).exists():
-            raise ValidationError('You’re already on this class.')
-        capacity = fencing_class.capacity
-        if capacity is not None and fencing_class.attendance.count() >= capacity:
-            raise ValidationError('This class is full.')
+        if session.attendance.filter(member=member).exists():
+            raise ValidationError('You’re already on this session.')
+        capacity = session.capacity
+        if capacity is not None and session.attendance.count() >= capacity:
+            raise ValidationError('This session is full.')
         return Attendance.objects.create(
-            fencing_class=fencing_class, member=member, status='enrolled'
+            session=session, member=member, status='enrolled'
         )
 
 
-def unenrol(user, fencing_class):
-    row = fencing_class.attendance.filter(member__profile__user=user).first()
+def unenrol(user, session):
+    if session.is_individual:
+        raise ValidationError('Cancel a private lesson from Private lessons.')
+    row = session.attendance.filter(member__profile__user=user).first()
     if row is None:
-        raise ValidationError('You’re not on this class.')
-    if fencing_class.start <= timezone.now() or row.status != 'enrolled':
+        raise ValidationError('You’re not on this session.')
+    if session.start <= timezone.now() or row.status != 'enrolled':
         raise ValidationError('Only upcoming enrolments can be cancelled. Ask a manager.')
     row.delete()
 
 
-def repeat_weekly(fencing_class, until):
-    """Copies the class, and its roster, every week up to `until`. Returns how many."""
-    if until > timezone.localdate(fencing_class.start) + timedelta(days=366):
+def repeat_weekly(session, until):
+    """Copies the session, and its roster, every week up to `until`. Returns how many."""
+    if until > timezone.localdate(session.start) + timedelta(days=366):
         raise ValidationError({'until': 'Repeat for at most one year.'})
-    if fencing_class.series and FencingClass.objects.filter(
-        series=fencing_class.series, start__gt=fencing_class.start
+    if session.series and TrainingSession.objects.filter(
+        series=session.series, start__gt=session.start
     ).exists():
-        raise ValidationError('Repeat from the last class in the series.')
+        raise ValidationError('Repeat from the last session in the series.')
 
-    roster = list(fencing_class.attendance.values_list('member_id', flat=True))
+    roster = list(session.attendance.values_list('member_id', flat=True))
     created = 0
     with transaction.atomic():
-        if fencing_class.series is None:
-            fencing_class.series = uuid.uuid4()
-            fencing_class.save(update_fields=['series'])
+        if session.series is None:
+            session.series = uuid.uuid4()
+            session.save(update_fields=['series'])
         week = 1
-        while timezone.localdate(fencing_class.start + timedelta(weeks=week)) <= until:
-            copy = FencingClass.objects.create(
-                name=fencing_class.name,
-                start=fencing_class.start + timedelta(weeks=week),
-                end=fencing_class.end + timedelta(weeks=week),
-                coach=fencing_class.coach,
-                location=fencing_class.location,
-                weapon=fencing_class.weapon,
-                capacity=fencing_class.capacity,
-                notes=fencing_class.notes,
-                series=fencing_class.series,
+        while timezone.localdate(session.start + timedelta(weeks=week)) <= until:
+            copy = TrainingSession.objects.create(
+                name=session.name,
+                start=session.start + timedelta(weeks=week),
+                end=session.end + timedelta(weeks=week),
+                coach=session.coach,
+                location=session.location,
+                category=session.category,
+                weapon=session.weapon,
+                capacity=session.capacity,
+                notes=session.notes,
+                series=session.series,
             )
             Attendance.objects.bulk_create([
-                Attendance(fencing_class=copy, member_id=member_id, status='enrolled')
+                Attendance(session=copy, member_id=member_id, status='enrolled')
                 for member_id in roster
             ])
             created += 1
@@ -89,47 +95,43 @@ def repeat_weekly(fencing_class, until):
     return created
 
 
-# Times stay per class, and notes are usually about one week.
-SERIES_FIELDS = ['name', 'coach', 'location', 'weapon', 'capacity']
+# Times stay per session, and notes are usually about one week.
+SERIES_FIELDS = ['name', 'category', 'coach', 'location', 'weapon', 'capacity']
 
 
-def following(fencing_class):
-    """This class and the later ones in its weekly series."""
-    if fencing_class.series is None:
-        raise ValidationError('This class is not part of a series.')
-    return FencingClass.objects.filter(
-        series=fencing_class.series, start__gte=fencing_class.start
+def following(session):
+    """This session and the later ones in its weekly series."""
+    if session.series is None:
+        raise ValidationError('This session is not part of a series.')
+    return TrainingSession.objects.filter(
+        series=session.series, start__gte=session.start
     )
 
 
-# Private lessons
+# Private lessons: individual sessions a member asks for, unconfirmed until their
+# coach says yes. Declining or cancelling one deletes it.
 
 def coaches_of(member):
     """The coaches a member can ask for lessons: their primary coach, and whoever
-    coaches a class they're on."""
+    coaches a session they're on."""
     return Coach.objects.filter(
-        Q(members=member) | Q(classes__attendance__member=member), active=True
+        Q(members=member)
+        | Q(sessions__status=CONFIRMED, sessions__attendance__member=member),
+        active=True,
     ).distinct()
 
 
 def coach_bookings(coach, start, end):
-    """The coach's classes and pending lesson requests overlapping start to end.
-    Accepted lessons are classes already, so they're in the first list."""
-    classes = FencingClass.objects.filter(coach=coach, start__lt=end, end__gt=start)
-    pending = LessonRequest.objects.filter(
-        coach=coach, status=LessonRequest.Status.PENDING, start__lt=end, end__gt=start
-    )
-    return classes, pending
+    """The coach's sessions overlapping start to end, including unconfirmed lessons,
+    since the time is held for them until the coach answers."""
+    return TrainingSession.objects.filter(coach=coach, start__lt=end, end__gt=start)
 
 
 def busy_slots(member, coach, start, end):
     """When one of the member's coaches is booked, without saying what with."""
-    classes, pending = coach_bookings(coach, start, end)
     # The member's own requests and lessons are shown with their details instead.
-    classes = classes.exclude(lesson_request__member=member)
-    pending = pending.exclude(member=member)
-    slots = [*classes.values('start', 'end'), *pending.values('start', 'end')]
-    return sorted(slots, key=lambda slot: slot['start'])
+    bookings = coach_bookings(coach, start, end).exclude(attendance__member=member)
+    return list(bookings.order_by('start').values('start', 'end'))
 
 
 def lesson_time_errors(start, end):
@@ -144,67 +146,58 @@ def lesson_time_errors(start, end):
 
 
 def request_lesson(user, coach, start, end, note=''):
+    """An unconfirmed individual session with the member on it, for the coach to
+    confirm or decline."""
     if role_of(user) != MEMBER:
         raise ValidationError('Only members can request lessons.')
     member = own_member(user)
     if not coaches_of(member).filter(id=coach.id).exists():
         raise ValidationError({'coach': 'You can only ask your own coaches.'})
     with transaction.atomic():
-        classes, pending = coach_bookings(coach, start, end)
-        if classes.exists() or pending.exists():
+        if coach_bookings(coach, start, end).exists():
             raise ValidationError(f'{coach.name} is busy then.')
-        return LessonRequest.objects.create(
-            member=member, coach=coach, start=start, end=end, note=note
+        lesson = TrainingSession.objects.create(
+            name=f'Private lesson: {member.name}',
+            start=start,
+            end=end,
+            coach=coach,
+            weapon=member.weapon,
+            capacity=1,
+            notes=note,
+            status=UNCONFIRMED,
         )
+        Attendance.objects.create(session=lesson, member=member, status='enrolled')
+    return lesson
 
 
-def check_pending(lesson):
-    if lesson.status != LessonRequest.Status.PENDING:
-        raise ValidationError(f'This request is already {lesson.status}.')
+def check_unconfirmed(lesson):
+    if not lesson.is_individual or lesson.status != UNCONFIRMED:
+        raise ValidationError('This lesson is already confirmed.')
 
 
 def accept_lesson(lesson):
-    """Makes the lesson a one-person class, so it shows on calendars and can be marked."""
-    check_pending(lesson)
+    """Confirms the lesson, so it shows on calendars and can be marked."""
+    check_unconfirmed(lesson)
     with transaction.atomic():
-        if FencingClass.objects.filter(
-            coach=lesson.coach, start__lt=lesson.end, end__gt=lesson.start
-        ).exists():
-            raise ValidationError('There’s already a class at that time.')
-        fencing_class = FencingClass.objects.create(
-            name=f'Private lesson: {lesson.member.name}',
-            start=lesson.start,
-            end=lesson.end,
-            coach=lesson.coach,
-            weapon=lesson.member.weapon,
-            capacity=1,
-            notes=lesson.note,
-        )
-        Attendance.objects.create(
-            fencing_class=fencing_class, member=lesson.member, status='enrolled'
-        )
-        lesson.fencing_class = fencing_class
-        lesson.status = LessonRequest.Status.ACCEPTED
-        lesson.save(update_fields=['fencing_class', 'status'])
+        clash = coach_bookings(lesson.coach, lesson.start, lesson.end).filter(status=CONFIRMED)
+        if clash.exists():
+            raise ValidationError('There’s already a session at that time.')
+        lesson.status = CONFIRMED
+        lesson.save(update_fields=['status'])
 
 
 def decline_lesson(lesson):
-    check_pending(lesson)
-    lesson.status = LessonRequest.Status.DECLINED
-    lesson.save(update_fields=['status'])
+    check_unconfirmed(lesson)
+    lesson.delete()
 
 
 def cancel_lesson(lesson):
-    if lesson.status not in (LessonRequest.Status.PENDING, LessonRequest.Status.ACCEPTED):
-        raise ValidationError(f'This request is already {lesson.status}.')
+    """The member calls off a request, or a confirmed lesson that hasn't started."""
+    if not lesson.is_individual:
+        raise ValidationError('Only private lessons can be cancelled here.')
     if lesson.start <= timezone.now():
         raise ValidationError('This lesson has already started.')
-    with transaction.atomic():
-        if lesson.fencing_class:
-            lesson.fencing_class.delete()
-            lesson.fencing_class = None
-        lesson.status = LessonRequest.Status.CANCELLED
-        lesson.save(update_fields=['fencing_class', 'status'])
+    lesson.delete()
 
 
 # Logins

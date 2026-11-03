@@ -20,7 +20,7 @@ class LoginTests(ClubTestCase):
         self.assertRedirects(self.client.get('/members/'), '/login/?next=/members/')
 
     def test_htmx_requests_redirect_the_whole_page(self):
-        response = self.client.get(f'/classes/{self.junior.id}/', **HTMX)
+        response = self.client.get(f'/sessions/{self.junior.id}/', **HTMX)
         self.assertEqual(response['HX-Redirect'], '/login/')
 
     def test_logging_in_then_out(self):
@@ -77,7 +77,7 @@ class InviteTests(ClubTestCase):
         link = emailed_link()
         self.assertContains(self.client.get(link), 'Welcome, Sam Lee')
         self.assertRedirects(self.client.post(link, self.passwords), '/')
-        self.assertContains(self.client.get('/book/'), 'Book a class')
+        self.assertContains(self.client.get('/book/'), 'Book a session')
 
     def test_links_work_once_and_resending_replaces_them(self):
         self.client.force_login(self.manager)

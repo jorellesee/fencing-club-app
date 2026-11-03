@@ -1,4 +1,4 @@
-"""Book a class: upcoming classes a member isn't on yet, to enrol themselves in."""
+"""Book a session: upcoming group sessions a member isn’t on yet, to enrol in."""
 from django.core.exceptions import ValidationError
 from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_POST
@@ -11,7 +11,7 @@ from .common import is_htmx, role_required, when
 
 @role_required(MEMBER)
 def book(request, message='', error=''):
-    rows = queries.bookable_classes(request.user)
+    rows = queries.bookable_sessions(request.user)
     for row in rows:
         row.spots = None if row.capacity is None else max(row.capacity - row.member_count, 0)
     template = 'web/book/list.html' if is_htmx(request) else 'web/book/page.html'
@@ -20,11 +20,11 @@ def book(request, message='', error=''):
 
 @role_required(MEMBER)
 @require_POST
-def book_class(request, pk):
-    fencing_class = get_object_or_404(queries.visible_classes(request.user), pk=pk)
+def book_session(request, pk):
+    session = get_object_or_404(queries.visible_sessions(request.user), pk=pk)
     try:
-        services.enrol(services.own_member(request.user), fencing_class)
+        services.enrol(services.own_member(request.user), session)
     except ValidationError as error:
         return book(request, error=services.error_text(error))
-    message = f'You’re enrolled in {fencing_class.name}, {when(fencing_class.start)}.'
+    message = f'You’re enrolled in {session.name}, {when(session.start)}.'
     return book(request, message=message)

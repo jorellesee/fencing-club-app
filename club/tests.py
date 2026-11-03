@@ -11,7 +11,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from . import queries, services
-from .models import Attendance, Coach, FencingClass, LessonRequest, Member, Profile
+from .models import Attendance, Coach, Member, Profile, TrainingSession
 from .roles import role_of
 
 SGT = ZoneInfo('Asia/Singapore')
@@ -38,21 +38,21 @@ def login_for(username, role, **person):
 class ModelTests(TestCase):
     def setUp(self):
         self.alex = Member.objects.create(name='Alex Tan')
-        self.junior = FencingClass.objects.create(
+        self.junior = TrainingSession.objects.create(
             name='Junior Foil', start=at(20, 17), end=at(20, 18)
         )
 
-    def test_member_can_only_appear_once_per_class(self):
-        Attendance.objects.create(fencing_class=self.junior, member=self.alex, status='present')
+    def test_member_can_only_appear_once_per_session(self):
+        Attendance.objects.create(session=self.junior, member=self.alex, status='present')
         with self.assertRaises(IntegrityError):
-            Attendance.objects.create(fencing_class=self.junior, member=self.alex, status='absent')
+            Attendance.objects.create(session=self.junior, member=self.alex, status='absent')
 
-    def test_deleting_class_deletes_its_attendance(self):
-        Attendance.objects.create(fencing_class=self.junior, member=self.alex, status='present')
+    def test_deleting_session_deletes_its_attendance(self):
+        Attendance.objects.create(session=self.junior, member=self.alex, status='present')
         self.junior.delete()
         self.assertEqual(Attendance.objects.count(), 0)
 
-    def test_deleting_a_coach_keeps_their_classes_and_members(self):
+    def test_deleting_a_coach_keeps_their_sessions_and_members(self):
         lim = Coach.objects.create(name='Coach Lim')
         self.junior.coach = lim
         self.junior.save()
@@ -78,49 +78,58 @@ class RepeatTests(TestCase):
     def setUp(self):
         self.alex = Member.objects.create(name='Alex Tan')
         self.lim = Coach.objects.create(name='Coach Lim')
-        self.junior = FencingClass.objects.create(
+        self.junior = TrainingSession.objects.create(
             name='Junior Foil', start=at(20, 17), end=at(20, 18), coach=self.lim,
             location='Hall A', weapon='foil',
         )
-        Attendance.objects.create(fencing_class=self.junior, member=self.alex, status='present')
+        Attendance.objects.create(session=self.junior, member=self.alex, status='present')
 
     def test_creates_weekly_copies_until_the_date(self):
         self.assertEqual(services.repeat_weekly(self.junior, date(2026, 11, 10)), 3)
-        starts = list(FencingClass.objects.values_list('start', flat=True))
+        starts = list(TrainingSession.objects.values_list('start', flat=True))
         self.assertEqual(starts, [at(20, 17) + timedelta(weeks=n) for n in range(4)])
 
     def test_copies_share_a_series_and_details(self):
         services.repeat_weekly(self.junior, date(2026, 11, 3))
         self.junior.refresh_from_db()
         self.assertIsNotNone(self.junior.series)
-        for copy in FencingClass.objects.exclude(id=self.junior.id):
+        for copy in TrainingSession.objects.exclude(id=self.junior.id):
             self.assertEqual(
                 (copy.series, copy.coach, copy.location, copy.weapon),
                 (self.junior.series, self.lim, 'Hall A', 'foil'),
             )
 
+    def test_copies_keep_category_and_capacity(self):
+        gym = TrainingSession.objects.create(
+            name='Strength', start=at(21, 7), end=at(21, 8),
+            category='conditioning', capacity=1,
+        )
+        services.repeat_weekly(gym, date(2026, 10, 28))
+        copy = TrainingSession.objects.get(start=at(28, 7))
+        self.assertEqual((copy.category, copy.is_individual), ('conditioning', True))
+
     def test_copies_enrol_the_same_members(self):
         services.repeat_weekly(self.junior, date(2026, 10, 27))
-        copy = FencingClass.objects.get(start=at(27, 17))
+        copy = TrainingSession.objects.get(start=at(27, 17))
         self.assertEqual(list(copy.attendance.values_list('member', 'status')),
                          [(self.alex.id, 'enrolled')])
 
     def test_at_most_one_year(self):
         with self.assertRaises(ValidationError):
             services.repeat_weekly(self.junior, date(2028, 1, 1))
-        self.assertEqual(FencingClass.objects.count(), 1)
+        self.assertEqual(TrainingSession.objects.count(), 1)
 
-    def test_only_from_the_last_class_in_a_series(self):
+    def test_only_from_the_last_session_in_a_series(self):
         services.repeat_weekly(self.junior, date(2026, 11, 3))
         with self.assertRaises(ValidationError):
             services.repeat_weekly(self.junior, date(2026, 12, 1))
 
-    def test_following_is_this_and_later_classes(self):
+    def test_following_is_this_and_later_sessions(self):
         services.repeat_weekly(self.junior, date(2026, 11, 10))
-        second = FencingClass.objects.get(start=at(27, 17))
+        second = TrainingSession.objects.get(start=at(27, 17))
         self.assertEqual(services.following(second).count(), 3)
         services.following(second).delete()
-        self.assertEqual(list(FencingClass.objects.all()), [self.junior])
+        self.assertEqual(list(TrainingSession.objects.all()), [self.junior])
 
     def test_following_needs_a_series(self):
         with self.assertRaises(ValidationError):
@@ -132,7 +141,7 @@ class EnrolTests(TestCase):
         self.alex = Member.objects.create(name='Alex Tan')
         self.sam = Member.objects.create(name='Sam Lee')
         self.user = login_for('alex', 'member', member=self.alex)
-        self.open = FencingClass.objects.create(
+        self.open = TrainingSession.objects.create(
             name='Open Sabre', start=soon(2), end=soon(2, 11), capacity=2
         )
 
@@ -144,14 +153,14 @@ class EnrolTests(TestCase):
         services.enrol(self.alex, self.open)
         with self.assertRaises(ValidationError):
             services.enrol(self.alex, self.open)
-        past = FencingClass.objects.create(name='Past', start=at(20, 17), end=at(20, 18))
+        past = TrainingSession.objects.create(name='Past', start=at(20, 17), end=at(20, 18))
         with self.assertRaises(ValidationError):
             services.enrol(self.alex, past)
-        tiny = FencingClass.objects.create(
+        tiny = TrainingSession.objects.create(
             name='Tiny', start=self.open.start, end=self.open.end, capacity=1
         )
         services.enrol(self.sam, tiny)
-        with self.assertRaisesMessage(ValidationError, 'This class is full.'):
+        with self.assertRaisesMessage(ValidationError, 'This session is full.'):
             services.enrol(self.alex, tiny)
 
     def test_inactive_members_cannot_enrol(self):
@@ -166,7 +175,7 @@ class EnrolTests(TestCase):
         self.assertFalse(self.open.attendance.exists())
 
     def test_cannot_cancel_once_marked(self):
-        Attendance.objects.create(fencing_class=self.open, member=self.alex, status='excused')
+        Attendance.objects.create(session=self.open, member=self.alex, status='excused')
         with self.assertRaises(ValidationError):
             services.unenrol(self.user, self.open)
 
@@ -180,7 +189,7 @@ class LessonTests(TestCase):
         self.alex_user = login_for('alex', 'member', member=self.alex)
         self.sam_user = login_for('sam', 'member', member=self.sam)
         self.day = soon(3)
-        FencingClass.objects.create(
+        TrainingSession.objects.create(
             name='Junior Foil', start=self.day, end=self.day + timedelta(hours=1), coach=self.lim
         )
 
@@ -188,17 +197,18 @@ class LessonTests(TestCase):
         start = self.day.replace(hour=hour)
         return services.request_lesson(user, coach, start, start + timedelta(hours=hours))
 
-    def test_coaches_are_primary_coach_and_class_coaches(self):
+    def test_coaches_are_primary_coach_and_session_coaches(self):
         self.assertEqual(list(services.coaches_of(self.alex)), [self.lim])
-        ng_class = FencingClass.objects.create(
+        ng_class = TrainingSession.objects.create(
             name='Sabre', start=self.day, end=self.day + timedelta(hours=1), coach=self.ng
         )
-        Attendance.objects.create(fencing_class=ng_class, member=self.alex, status='enrolled')
+        Attendance.objects.create(session=ng_class, member=self.alex, status='enrolled')
         self.assertEqual(list(services.coaches_of(self.alex)), [self.lim, self.ng])
 
     def test_requesting(self):
         lesson = self.ask(self.alex_user, self.lim, 14)
-        self.assertEqual((lesson.member, lesson.status), (self.alex, 'pending'))
+        self.assertEqual((lesson.member, lesson.status), (self.alex, 'unconfirmed'))
+        self.assertEqual((lesson.is_individual, lesson.weapon), (True, 'foil'))
 
     def test_only_own_coaches(self):
         with self.assertRaises(ValidationError):
@@ -228,36 +238,69 @@ class LessonTests(TestCase):
         self.assertEqual(len(slots), 2)
         self.assertEqual(set(slots[0]), {'start', 'end'})
 
-    def test_accepting_makes_a_one_person_class(self):
+    def test_accepting_confirms_it(self):
         lesson = self.ask(self.alex_user, self.lim, 14)
         services.accept_lesson(lesson)
-        fencing_class = lesson.fencing_class
-        self.assertEqual(lesson.status, 'accepted')
-        self.assertEqual((fencing_class.coach, fencing_class.capacity), (self.lim, 1))
-        self.assertEqual(fencing_class.attendance.get().member, self.alex)
+        lesson.refresh_from_db()
+        self.assertEqual(lesson.status, 'confirmed')
+        self.assertEqual(lesson.attendance.get().member, self.alex)
+        with self.assertRaises(ValidationError):
+            services.accept_lesson(lesson)
+
+    def test_not_accepted_over_a_session_made_since(self):
+        lesson = self.ask(self.alex_user, self.lim, 14)
+        TrainingSession.objects.create(
+            name='Extra', start=lesson.start, end=lesson.end, coach=self.lim
+        )
+        with self.assertRaises(ValidationError):
+            services.accept_lesson(lesson)
 
     def test_private_lessons_are_not_bookable(self):
         lesson = self.ask(self.alex_user, self.lim, 14)
         services.accept_lesson(lesson)
-        names = [c.name for c in queries.bookable_classes(self.sam_user)]
+        names = [c.name for c in queries.bookable_sessions(self.sam_user)]
         self.assertEqual(names, ['Junior Foil'])
-        self.assertFalse(
-            queries.visible_classes(self.sam_user).filter(id=lesson.fencing_class_id).exists()
-        )
+        self.assertFalse(queries.visible_sessions(self.sam_user).filter(id=lesson.id).exists())
 
-    def test_declining(self):
+    def test_capacity_decides_individual_or_group(self):
+        """Blank capacity means no limit, so those are group sessions too."""
+        for name, capacity in [('Solo', 1), ('Pair', 2), ('Open', None)]:
+            TrainingSession.objects.create(
+                name=name, start=self.day, end=self.day + timedelta(hours=1), capacity=capacity
+            )
+        names = {c.name for c in queries.bookable_sessions(self.sam_user)}
+        self.assertEqual(names, {'Junior Foil', 'Pair', 'Open'})
+
+    def test_requests_are_not_sessions_yet(self):
+        """Everywhere that lists sessions leaves requests out until they're confirmed."""
+        lesson = self.ask(self.alex_user, self.lim, 14)
+        lim = login_for('lim', 'coach', coach=self.lim)
+        for user in [self.alex_user, lim]:
+            self.assertFalse(queries.shown_sessions(user, {}).filter(id=lesson.id).exists())
+            self.assertFalse(queries.feed_sessions(user).filter(id=lesson.id).exists())
+        self.assertFalse(queries.bookable_sessions(self.sam_user).filter(id=lesson.id).exists())
+        self.assertFalse(queries.history(self.alex).exists())
+        self.assertEqual(queries.coaches().get(id=self.lim.id).session_count, 1)
+        self.assertFalse(queries.can_edit_session(lim, lesson))
+        self.assertEqual(list(queries.shown_requests(lim, {})), [lesson])
+
+    def test_declining_deletes_it(self):
         lesson = self.ask(self.alex_user, self.lim, 14)
         services.decline_lesson(lesson)
-        self.assertEqual(lesson.status, 'declined')
-        with self.assertRaises(ValidationError):
-            services.accept_lesson(lesson)
+        self.assertEqual(TrainingSession.objects.count(), 1)
+        self.assertFalse(Attendance.objects.exists())
 
-    def test_cancelling_an_accepted_lesson_removes_the_class(self):
+    def test_cancelling_a_confirmed_lesson_deletes_it(self):
         lesson = self.ask(self.alex_user, self.lim, 14)
         services.accept_lesson(lesson)
         services.cancel_lesson(lesson)
-        self.assertEqual(lesson.status, 'cancelled')
-        self.assertEqual(FencingClass.objects.count(), 1)
+        self.assertEqual(TrainingSession.objects.count(), 1)
+
+    def test_members_cancel_lessons_rather_than_unenrol(self):
+        lesson = self.ask(self.alex_user, self.lim, 14)
+        services.accept_lesson(lesson)
+        with self.assertRaises(ValidationError):
+            services.unenrol(self.alex_user, lesson)
 
 
 class InviteTests(TestCase):
@@ -316,24 +359,24 @@ class QueryTests(TestCase):
         self.sam = Member.objects.create(name='Sam Lee')
         self.lim = Coach.objects.create(name='Coach Lim')
         wong = Coach.objects.create(name='Coach Wong')
-        self.junior = FencingClass.objects.create(
+        self.junior = TrainingSession.objects.create(
             name='Junior Foil', start=at(20, 17), end=at(20, 18), coach=self.lim,
             location='Hall A', weapon='foil',
         )
-        self.senior = FencingClass.objects.create(
+        self.senior = TrainingSession.objects.create(
             name='Senior Epee', start=at(21, 19), end=at(21, 21), coach=wong, location='Hall B',
         )
-        FencingClass.objects.create(
+        TrainingSession.objects.create(
             name='Open Bouting', start=at(22, 19), end=at(22, 21), coach=self.lim,
             location='Hall A',
         )
-        Attendance.objects.create(fencing_class=self.junior, member=self.alex, status='present')
-        Attendance.objects.create(fencing_class=self.junior, member=self.sam, status='enrolled')
-        Attendance.objects.create(fencing_class=self.senior, member=self.sam, status='present')
+        Attendance.objects.create(session=self.junior, member=self.alex, status='present')
+        Attendance.objects.create(session=self.junior, member=self.sam, status='enrolled')
+        Attendance.objects.create(session=self.senior, member=self.sam, status='present')
         self.manager = User.objects.create_user('manager', is_staff=True)
 
     def names(self, **filters):
-        return [c.name for c in queries.shown_classes(self.manager, filters)]
+        return [c.name for c in queries.shown_sessions(self.manager, filters)]
 
     def test_filters(self):
         self.assertEqual(self.names(coach=self.lim.id), ['Junior Foil', 'Open Bouting'])
@@ -342,47 +385,47 @@ class QueryTests(TestCase):
         self.assertEqual(self.names(weapon='foil'), ['Junior Foil'])
         self.assertEqual(self.names(location='Hall A', member=self.sam.id), ['Junior Foil'])
 
-    def test_member_filter_keeps_whole_class_counts(self):
-        junior = queries.shown_classes(self.manager, {'member': self.alex.id}).get()
+    def test_member_filter_keeps_whole_session_counts(self):
+        junior = queries.shown_sessions(self.manager, {'member': self.alex.id}).get()
         self.assertEqual((junior.member_count, junior.present_count), (2, 1))
 
-    def test_classes_are_in_time_order(self):
-        early = FencingClass.objects.create(name='Early', start=at(19, 7), end=at(19, 8))
-        self.assertEqual(queries.shown_classes(self.manager, {})[0], early)
+    def test_sessions_are_in_time_order(self):
+        early = TrainingSession.objects.create(name='Early', start=at(19, 7), end=at(19, 8))
+        self.assertEqual(queries.shown_sessions(self.manager, {})[0], early)
 
     def test_locations_lists_each_name_once(self):
         self.assertEqual(list(queries.locations()), ['Hall A', 'Hall B'])
 
-    def test_members_see_only_their_classes_with_whole_class_counts(self):
+    def test_members_see_only_their_sessions_with_whole_session_counts(self):
         alex = login_for('alex', 'member', member=self.alex)
-        mine = queries.shown_classes(alex, {'coach': self.lim.id})
+        mine = queries.shown_sessions(alex, {'coach': self.lim.id})
         self.assertEqual([c.name for c in mine], ['Junior Foil'])
         self.assertEqual(mine[0].member_count, 2)
         self.assertEqual([m.name for m in queries.visible_members(alex)], ['Alex Tan'])
 
-    def test_coaches_calendar_shows_their_classes_but_they_can_open_any(self):
+    def test_coaches_calendar_shows_their_sessions_but_they_can_open_any(self):
         lim = login_for('lim', 'coach', coach=self.lim)
-        shown = [c.name for c in queries.shown_classes(lim, {})]
+        shown = [c.name for c in queries.shown_sessions(lim, {})]
         self.assertEqual(shown, ['Junior Foil', 'Open Bouting'])
-        self.assertEqual(queries.visible_classes(lim).count(), 3)
-        self.assertTrue(queries.can_edit_class(lim, self.junior))
-        self.assertFalse(queries.can_edit_class(lim, self.senior))
+        self.assertEqual(queries.visible_sessions(lim).count(), 3)
+        self.assertTrue(queries.can_edit_session(lim, self.junior))
+        self.assertFalse(queries.can_edit_session(lim, self.senior))
 
     def test_a_coach_login_without_a_coach_edits_nothing(self):
         lim = login_for('lim', 'coach', coach=self.lim)
-        open_class = FencingClass.objects.create(name='Open', start=at(22, 17), end=at(22, 18))
+        open_class = TrainingSession.objects.create(name='Open', start=at(22, 17), end=at(22, 18))
         self.lim.delete()
         lim.refresh_from_db()
-        self.assertFalse(queries.can_edit_class(lim, open_class))
-        self.assertFalse(queries.shown_classes(lim, {}).exists())
+        self.assertFalse(queries.can_edit_session(lim, open_class))
+        self.assertFalse(queries.shown_sessions(lim, {}).exists())
 
     def test_member_stats(self):
         statuses = ['present', 'absent', 'excused', 'enrolled']
         for day, status in zip(range(23, 27), statuses):
-            fencing_class = FencingClass.objects.create(
+            session = TrainingSession.objects.create(
                 name='Junior Foil', start=at(day, 17), end=at(day, 18)
             )
-            Attendance.objects.create(fencing_class=fencing_class, member=self.alex, status=status)
+            Attendance.objects.create(session=session, member=self.alex, status=status)
         alex = queries.members().get(id=self.alex.id)
         # Present on the 20th and 23rd; only present and absent count as marked.
         self.assertEqual((alex.present_count, alex.marked_count), (2, 3))
@@ -390,21 +433,28 @@ class QueryTests(TestCase):
         history = [row.status for row in queries.history(alex)]
         self.assertEqual(history[:2], ['enrolled', 'excused'])
 
-    def test_coach_counts_and_next_class(self):
-        FencingClass.objects.create(
+    def test_coach_counts_and_next_session(self):
+        TrainingSession.objects.create(
             name='Soon', start=soon(3), end=soon(3, 11), coach=self.lim
         )
         lim = queries.coaches().get(id=self.lim.id)
-        self.assertEqual((lim.class_count, lim.next_class), (3, soon(3)))
+        self.assertEqual((lim.session_count, lim.next_session), (3, soon(3)))
+
+    def test_category_filter(self):
+        TrainingSession.objects.create(
+            name='Strength', start=at(22, 17), end=at(22, 18), category='conditioning'
+        )
+        self.assertEqual(self.names(category='conditioning'), ['Strength'])
+        self.assertNotIn('Strength', self.names(category='fencing'))
 
     def test_requests_on_the_calendar(self):
         start = soon(3)
-        LessonRequest.objects.create(
-            member=self.alex, coach=self.lim, start=start, end=start + timedelta(hours=1)
-        )
+        alex = login_for('alex', 'member', member=self.alex)
+        services.request_lesson(alex, self.lim, start, start + timedelta(hours=1))
         self.assertEqual(queries.shown_requests(self.manager, {}).count(), 1)
         self.assertEqual(queries.shown_requests(self.manager, {'location': 'Hall A'}).count(), 0)
+        self.assertEqual(queries.shown_requests(self.manager, {'member': self.alex.id}).count(), 1)
         sam = login_for('sam', 'member', member=self.sam)
         self.assertEqual(queries.shown_requests(sam, {}).count(), 0)
         ng = login_for('ng', 'coach', coach=Coach.objects.create(name='Coach Ng'))
-        self.assertEqual(queries.visible_requests(ng).count(), 0)
+        self.assertEqual(queries.visible_lessons(ng).count(), 0)

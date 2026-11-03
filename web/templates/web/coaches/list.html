@@ -14,14 +14,14 @@
            hx-select="#coach-table" hx-swap="outerHTML" hx-disinherit="*">
         {% if coaches %}
         <table class="table database clickable">
-          <thead><tr><th>Name</th><th>Weapon</th><th class="hide-phone">Classes</th><th class="hide-phone">Next class</th><th>Status</th></tr></thead>
+          <thead><tr><th>Name</th><th>Weapon</th><th class="hide-phone">Sessions</th><th class="hide-phone">Next session</th><th>Status</th></tr></thead>
           <tbody>
             {% for coach in coaches %}
             <tr hx-get="{% url 'coach_panel' coach.id %}" hx-target="#panel" :class="{ selected: selected == '{{ coach.id }}' }">
               <td class="strong">{{ coach.name }}</td>
               <td>{% weapon_tag coach.weapon %}</td>
-              <td class="hide-phone">{{ coach.class_count }}</td>
-              <td class="muted hide-phone">{{ coach.next_class|date:"D j M, H:i" }}</td>
+              <td class="hide-phone">{{ coach.session_count }}</td>
+              <td class="muted hide-phone">{{ coach.next_session|date:"D j M, H:i" }}</td>
               <td>{% active_tag coach.active %}</td>
             </tr>
             {% endfor %}

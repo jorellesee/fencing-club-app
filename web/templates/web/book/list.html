@@ -1,23 +1,23 @@
 {% load club %}
-{# Enrolling returns this list again, without the class just booked. #}
+{# Enrolling returns this list again, without the session just booked. #}
 <div id="book-list">
   {% if message %}<p class="notice">{{ message }}</p>{% endif %}
   {% if error %}<p class="error">{{ error }}</p>{% endif %}
   {% if rows %}
   <table class="table database">
-    <thead><tr><th>When</th><th>Class</th><th class="hide-phone">Weapon</th><th class="hide-phone">Coach</th><th class="hide-phone">Location</th><th class="hide-phone">Spots</th><th></th></tr></thead>
+    <thead><tr><th>When</th><th>Session</th><th class="hide-phone">Weapon</th><th class="hide-phone">Coach</th><th class="hide-phone">Location</th><th class="hide-phone">Spots</th><th></th></tr></thead>
     <tbody>
       {% for c in rows %}
       <tr>
         <td class="muted">{{ c.start|date:"D j M, H:i" }}</td>
-        <td class="strong">{{ c.name }}</td>
+        <td class="strong">{{ c.name }} {% category_tag c.category %}</td>
         <td class="hide-phone">{% weapon_tag c.weapon %}</td>
         <td class="hide-phone">{{ c.coach.name|default:'' }}</td>
         <td class="hide-phone">{{ c.location }}</td>
         <td class="muted hide-phone">{% if c.spots is None %}Open{% else %}{{ c.spots }} left{% endif %}</td>
         <td class="row-actions">
           <button class="button primary" {% if c.spots == 0 %}disabled{% endif %}
-                  hx-post="{% url 'book_class' c.id %}" hx-target="#book-list" hx-swap="outerHTML">
+                  hx-post="{% url 'book_session' c.id %}" hx-target="#book-list" hx-swap="outerHTML">
             {% if c.spots == 0 %}Full{% else %}Enrol{% endif %}
           </button>
         </td>
@@ -26,6 +26,6 @@
     </tbody>
   </table>
   {% else %}
-  <p class="empty">No upcoming classes to book right now.</p>
+  <p class="empty">No upcoming sessions to book right now.</p>
   {% endif %}
 </div>

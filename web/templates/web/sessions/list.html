@@ -4,16 +4,16 @@
 <div class="calendar-page" x-data="peek()">
   <div class="page-scroll">
     <div class="page" x-data="filters({{ filters_json }})">
-      {% include 'web/classes/header.html' %}
-      {# Reloads itself when the filters change or a class is edited. hx-select #}
+      {% include 'web/sessions/header.html' %}
+      {# Reloads itself when the filters change or a session is edited. hx-select #}
       {# picks this part out of the whole page that /table/ returns. hx-disinherit #}
       {# stops the rows inside from picking up these attributes for their own requests. #}
-      <div id="class-table"
-           hx-get="{% url 'class_list' %}" hx-include="#filters"
-           hx-trigger="filters-changed from:window, classesChanged from:body"
-           hx-select="#class-table" hx-swap="outerHTML" hx-disinherit="*">
-        {% include 'web/classes/rows.html' with title='Upcoming' rows=upcoming empty='No upcoming classes.' %}
-        {% include 'web/classes/rows.html' with title='Past' rows=past empty='No past classes.' %}
+      <div id="session-table"
+           hx-get="{% url 'session_list' %}" hx-include="#filters"
+           hx-trigger="filters-changed from:window, sessionsChanged from:body"
+           hx-select="#session-table" hx-swap="outerHTML" hx-disinherit="*">
+        {% include 'web/sessions/rows.html' with title='Upcoming' rows=upcoming empty='No upcoming sessions.' %}
+        {% include 'web/sessions/rows.html' with title='Past' rows=past empty='No past sessions.' %}
       </div>
     </div>
   </div>

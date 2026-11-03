@@ -5,7 +5,7 @@
   <thead>
     <tr>
       <th>When</th>
-      <th>Class</th>
+      <th>Session</th>
       <th class="hide-phone">Weapon</th>
       {% if request.role != 'coach' %}<th class="hide-phone">Coach</th>{% endif %}
       <th class="hide-phone">Location</th>
@@ -14,9 +14,9 @@
   </thead>
   <tbody>
     {% for c in rows %}
-    <tr hx-get="{% url 'class_panel' c.id %}" hx-target="#panel" :class="{ selected: selected === '{{ c.id }}' }">
+    <tr hx-get="{% url 'session_panel' c.id %}" hx-target="#panel" :class="{ selected: selected === '{{ c.id }}' }">
       <td class="muted">{{ c.start|date:"D j M, H:i" }}</td>
-      <td class="strong">{{ c.name }}</td>
+      <td class="strong">{{ c.name }} {% category_tag c.category %}</td>
       <td class="hide-phone">{% weapon_tag c.weapon %}</td>
       {% if request.role != 'coach' %}<td class="hide-phone">{{ c.coach.name|default:'' }}</td>{% endif %}
       <td class="hide-phone">{{ c.location }}</td>

@@ -2,13 +2,13 @@
 {% block main %}
 <div class="calendar-page" x-data="peek()">
   <div class="calendar" x-data="filters({{ filters_json }})">
-    {% include 'web/classes/header.html' %}
+    {% include 'web/sessions/header.html' %}
     <div class="calendar-body"
-         x-data="classCalendar({
+         x-data="sessionCalendar({
            events: '{% url 'calendar_events' %}',
            editable: {% if request.role == 'manager' %}true{% else %}false{% endif %},
-           moveUrl: '{% url 'class_move' 0 %}',
-           newUrl: '{% url 'class_new' %}',
+           moveUrl: '{% url 'session_move' 0 %}',
+           newUrl: '{% url 'session_new' %}',
          })"></div>
   </div>
   <div id="panel"></div>

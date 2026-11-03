@@ -5,7 +5,7 @@ from django.core.cache import cache
 from django.test import TestCase
 from django.utils import timezone
 
-from club.models import Coach, FencingClass, Member, Profile
+from club.models import Coach, Member, Profile, TrainingSession
 
 # What htmx sends with every request it makes.
 HTMX = {'HTTP_HX_REQUEST': 'true'}
@@ -29,7 +29,7 @@ class ClubTestCase(TestCase):
             name='Alex Tan', email='alex@example.com', primary_coach=self.lim
         )
         self.sam = Member.objects.create(name='Sam Lee')
-        self.junior = FencingClass.objects.create(
+        self.junior = TrainingSession.objects.create(
             name='Junior Foil', start=soon(2), end=soon(2, 19), coach=self.lim, capacity=2
         )
         self.coach_user = self.login_for(Profile.Role.COACH, coach=self.lim)

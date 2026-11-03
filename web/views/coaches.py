@@ -17,7 +17,7 @@ from .common import htmx, is_htmx, role_required
 def details_context(pk):
     coach = get_object_or_404(queries.coaches(), pk=pk)
     now = timezone.now()
-    own = queries.classes().filter(coach=coach)
+    own = queries.sessions().filter(coach=coach)
     # Five each, so a long weekly series doesn't fill the panel.
     return {
         'coach': coach,

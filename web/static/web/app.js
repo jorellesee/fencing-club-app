@@ -1,5 +1,5 @@
 // htmx fetches and swaps the HTML. Alpine holds the little state that lives only in
-// the browser: which side peek is open, the class filters, and the calendars.
+// the browser: which side peek is open, the session filters, and the calendars.
 
 function csrfToken() {
   return document.querySelector('meta[name="csrf-token"]').content
@@ -12,7 +12,7 @@ function closeModal() {
 // The server sends `HX-Trigger-After-Swap: closeModal` once a dialog’s form has saved.
 document.body.addEventListener('closeModal', closeModal)
 
-const FILTERS = ['coach', 'member', 'location', 'weapon']
+const FILTERS = ['coach', 'member', 'location', 'category', 'weapon', 'size']
 
 // Below this width the app uses its phone layout. Keep in step with app.css.
 const phone = window.matchMedia('(max-width: 768px)')
@@ -33,6 +33,9 @@ function timetable(views = '') {
       ...base,
       initialView: 'timeGridWeek',
       headerToolbar: { start: 'prev,next today', center: 'title', end: views },
+      // A month's days are too short to drag an end time in, and a busy day shows
+      // a few sessions and "+N more".
+      views: { dayGridMonth: { eventDurationEditable: false, dayMaxEvents: true } },
     }
   }
   return {
@@ -98,7 +101,7 @@ document.addEventListener('alpine:init', () => {
     },
   }))
 
-  // The Classes page's filters, shared by the calendar and the list through the URL.
+  // The Sessions page's filters, shared by the calendar and the list through the URL.
   // Changing one updates the URL and fires `filters-changed`, which the calendar
   // and the list's htmx trigger listen for.
   Alpine.data('filters', (initial) => ({
@@ -126,19 +129,27 @@ document.addEventListener('alpine:init', () => {
     },
   }))
 
-  // The Classes calendar. Managers drag to move or resize classes, and drag across
-  // an empty time to make one. Clicking an event opens its panel with htmx.
-  Alpine.data('classCalendar', ({ events, editable, moveUrl, newUrl }) => ({
+  // The Sessions calendar. Managers drag to move or resize sessions, and drag across
+  // an empty time to make one. Clicking an event opens its panel with htmx, and
+  // clicking a day in the month view opens that day.
+  Alpine.data('sessionCalendar', ({ events, editable, moveUrl, newUrl }) => ({
     init() {
       const calendar = mountCalendar(this.$el, () => ({
-        ...timetable('timeGridWeek,timeGridDay'),
+        ...timetable('dayGridMonth,timeGridWeek,timeGridDay'),
         events: eventsFrom(events, () => new URLSearchParams(window.location.search)),
         editable,
         selectable: editable,
+        // Day names link to that day. Not on a phone, which has no way back.
+        navLinks: !phone.matches,
         eventDrop: save,
         eventResize: save,
+        dateClick(info) {
+          if (info.view.type === 'dayGridMonth') calendar().changeView('timeGridDay', info.date)
+        },
         select(info) {
           calendar().unselect()
+          // A month's selection is whole days, with no times for a session.
+          if (info.allDay) return
           const query = new URLSearchParams({ start: info.start.toISOString(), end: info.end.toISOString() })
           htmx.ajax('GET', `${newUrl}?${query}`, { target: '#modal' })
         },
@@ -160,7 +171,7 @@ document.addEventListener('alpine:init', () => {
       }
 
       const refetch = () => calendar().refetchEvents()
-      document.body.addEventListener('classesChanged', refetch)
+      document.body.addEventListener('sessionsChanged', refetch)
       window.addEventListener('filters-changed', refetch)
     },
   }))

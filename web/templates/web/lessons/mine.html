@@ -11,12 +11,10 @@
       <tr>
         <td class="muted">{{ lesson.start|date:"D j M, H:i" }}</td>
         <td>{{ lesson.coach.name }}</td>
-        <td class="muted hide-phone">{{ lesson.note }}</td>
+        <td class="muted hide-phone">{{ lesson.notes }}</td>
         <td>{% lesson_status lesson.status %}</td>
         <td class="row-actions">
-          {% if lesson.status == 'pending' or lesson.status == 'accepted' %}
           <button class="button" hx-post="{% url 'lesson_cancel' lesson.id %}" hx-target="#my-lessons" hx-swap="outerHTML">Cancel</button>
-          {% endif %}
         </td>
       </tr>
       {% endfor %}

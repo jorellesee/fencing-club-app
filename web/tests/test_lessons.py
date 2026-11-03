@@ -1,4 +1,4 @@
-from club.models import Coach, LessonRequest, Profile
+from club.models import Coach, Profile, TrainingSession
 
 from .base import HTMX, ClubTestCase, soon
 
@@ -10,18 +10,21 @@ class LessonTests(ClubTestCase):
             'note': 'Parries',
         }, **HTMX)
 
+    def lesson(self):
+        return TrainingSession.objects.get(capacity=1)
+
     def test_member_requests_and_coach_accepts(self):
         self.client.force_login(self.alex_user)
         response = self.ask()
         self.assertEqual(response['HX-Retarget'], '#my-lessons')
-        self.assertContains(response, 'pending until they reply')
-        lesson = LessonRequest.objects.get()
+        self.assertContains(response, 'unconfirmed until they reply')
+        lesson = self.lesson()
 
         self.client.force_login(self.coach_user)
         response = self.client.post(f'/lesson-requests/{lesson.id}/accept/')
         self.assertContains(response, 'Private lesson: Alex Tan')
         lesson.refresh_from_db()
-        self.assertEqual(lesson.status, 'accepted')
+        self.assertEqual(lesson.status, 'confirmed')
 
     def test_busy_coach(self):
         self.client.force_login(self.alex_user)
@@ -44,7 +47,7 @@ class LessonTests(ClubTestCase):
     def test_only_the_coach_answers_and_only_the_member_cancels(self):
         self.client.force_login(self.alex_user)
         self.ask()
-        lesson = LessonRequest.objects.get()
+        lesson = self.lesson()
         self.assertEqual(self.client.post(f'/lesson-requests/{lesson.id}/accept/').status_code, 403)
 
         ng = self.login_for(Profile.Role.COACH, coach=Coach.objects.create(name='Coach Ng'))
@@ -57,8 +60,28 @@ class LessonTests(ClubTestCase):
     def test_member_cancels_from_my_requests(self):
         self.client.force_login(self.alex_user)
         self.ask()
-        lesson = LessonRequest.objects.get()
+        lesson = self.lesson()
         response = self.client.post(f'/lessons/{lesson.id}/cancel/', **HTMX)
         self.assertContains(response, 'Cancelled your lesson')
-        lesson.refresh_from_db()
-        self.assertEqual(lesson.status, 'cancelled')
+        self.assertFalse(TrainingSession.objects.filter(id=lesson.id).exists())
+
+    def test_coach_declines(self):
+        self.client.force_login(self.alex_user)
+        self.ask()
+        lesson = self.lesson()
+        self.client.force_login(self.coach_user)
+        self.client.post(f'/lesson-requests/{lesson.id}/decline/')
+        self.assertFalse(TrainingSession.objects.filter(id=lesson.id).exists())
+
+    def test_requests_cannot_be_marked_or_opened_as_sessions(self):
+        self.client.force_login(self.alex_user)
+        self.ask()
+        lesson = self.lesson()
+        self.client.force_login(self.coach_user)
+        self.assertEqual(self.client.get(f'/sessions/{lesson.id}/').status_code, 404)
+        self.assertEqual(self.client.post(f'/sessions/{lesson.id}/notes/').status_code, 404)
+        row = lesson.attendance.get()
+        self.assertEqual(
+            self.client.post(f'/attendance/{row.id}/status/', {'status': 'present'}).status_code,
+            403,
+        )

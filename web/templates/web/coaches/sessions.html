@@ -4,7 +4,7 @@
 <ul class="attendance history">
   {% for c in rows %}
   <li>
-    <span class="history-class">{{ c.name }}<span class="muted">{{ c.start|date:"D j M, H:i" }}{% if c.location %} · {{ c.location }}{% endif %}</span></span>
+    <span class="history-session">{{ c.name }}<span class="muted">{{ c.start|date:"D j M, H:i" }}{% if c.location %} · {{ c.location }}{% endif %}</span></span>
     <span class="muted" title="Present">{{ c|headcount }}</span>
   </li>
   {% endfor %}

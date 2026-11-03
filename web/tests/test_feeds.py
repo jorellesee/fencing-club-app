@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone as dt_timezone
 
 from club import ical, services
-from club.models import Attendance, CalendarFeed, Coach, FencingClass, LessonRequest, Profile
+from club.models import Attendance, CalendarFeed, Coach, Profile, TrainingSession
 
 from .base import HTMX, ClubTestCase, soon
 
@@ -18,12 +18,12 @@ class FeedTests(ClubTestCase):
         return [line[len('SUMMARY:'):] for line in text.split('\r\n') if line.startswith('SUMMARY:')]
 
     def test_the_feed_needs_no_login_but_a_real_token(self):
-        Attendance.objects.create(fencing_class=self.junior, member=self.alex, status='enrolled')
+        Attendance.objects.create(session=self.junior, member=self.alex, status='enrolled')
         response = self.feed(self.alex_user)
         self.assertEqual(response['Content-Type'], 'text/calendar; charset=utf-8')
         text = response.content.decode()
         self.assertTrue(text.startswith('BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:'))
-        self.assertIn('X-WR-CALNAME:Fencing Club: my classes\r\n', text)
+        self.assertIn('X-WR-CALNAME:Fencing Club: my sessions\r\n', text)
         self.assertIn(f'UID:class-{self.junior.id}@testserver\r\n', text)
         self.assertIn('DESCRIPTION:Coach: Coach Lim\r\n', text)
         self.assertTrue(text.endswith('END:VCALENDAR\r\n'))
@@ -34,11 +34,11 @@ class FeedTests(ClubTestCase):
         self.alex_user.save()
         self.assertEqual(self.feed(self.alex_user).status_code, 404)
 
-    def test_each_role_sees_its_own_classes(self):
+    def test_each_role_sees_its_own_sessions(self):
         ng = Coach.objects.create(name='Coach Ng')
-        FencingClass.objects.create(name='Epee', start=soon(3), end=soon(3, 19), coach=ng)
-        FencingClass.objects.create(name='Long ago', start=soon(-90), end=soon(-90, 19))
-        Attendance.objects.create(fencing_class=self.junior, member=self.alex, status='enrolled')
+        TrainingSession.objects.create(name='Epee', start=soon(3), end=soon(3, 19), coach=ng)
+        TrainingSession.objects.create(name='Long ago', start=soon(-90), end=soon(-90, 19))
+        Attendance.objects.create(session=self.junior, member=self.alex, status='enrolled')
 
         self.assertEqual(self.summaries(self.manager), ['Junior Foil', 'Epee'])
         self.assertEqual(self.summaries(self.coach_user), ['Junior Foil'])
@@ -48,10 +48,8 @@ class FeedTests(ClubTestCase):
         sam_user = self.login_for(Profile.Role.MEMBER, member=self.sam)
         self.sam.primary_coach = self.lim
         self.sam.save()
-        for hour, member in [(10, self.alex), (12, self.sam)]:
-            lesson = LessonRequest.objects.create(
-                member=member, coach=self.lim, start=soon(4, hour), end=soon(4, hour + 1)
-            )
+        for hour, user in [(10, self.alex_user), (12, sam_user)]:
+            lesson = services.request_lesson(user, self.lim, soon(4, hour), soon(4, hour + 1))
             services.accept_lesson(lesson)
 
         self.assertEqual(self.summaries(self.alex_user), ['Private lesson: Alex Tan'])

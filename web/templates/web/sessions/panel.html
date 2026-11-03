@@ -1,20 +1,20 @@
 {% load club %}
-{# A class's side peek. x-init tells the page's `peek` which row is open. #}
+{# A session's side peek. x-init tells the page's `peek` which row is open. #}
 <aside class="panel" x-init="selected = '{{ c.id }}'" @keydown.escape.window="if (!document.querySelector('#modal .modal')) close()">
   <button class="close" @click="close()" aria-label="Close">×</button>
   <h2>{{ c.name }}</h2>
   <p class="meta">
-    {{ c.start|date:"D H:i" }} – {{ c.end|date:"D H:i" }}{% if c.weapon %} · {{ c.get_weapon_display }}{% endif %}{% if c.coach %} · {{ c.coach.name }}{% endif %}{% if c.location %} · {{ c.location }}{% endif %}
+    {{ c.start|date:"D H:i" }} – {{ c.end|date:"D H:i" }}{% if c.category != 'fencing' %} · {{ c.get_category_display }}{% endif %}{% if c.is_individual %} · Individual{% endif %}{% if c.weapon %} · {{ c.get_weapon_display }}{% endif %}{% if c.coach %} · {{ c.coach.name }}{% endif %}{% if c.location %} · {{ c.location }}{% endif %}
   </p>
 
   {% if request.role == 'manager' %}
-    <button class="button" hx-get="{% url 'class_edit' c.id %}" hx-target="#modal">Edit class</button>
+    <button class="button" hx-get="{% url 'session_edit' c.id %}" hx-target="#modal">Edit session</button>
   {% endif %}
-  {% if request.role == 'member' and upcoming %}
+  {% if request.role == 'member' and upcoming and not c.is_individual %}
     {% if not rows %}
-      <button class="button primary" hx-post="{% url 'class_enrol' c.id %}" hx-vals='{"enrolled": "1"}' hx-target="closest .panel" hx-swap="outerHTML">Enrol</button>
+      <button class="button primary" hx-post="{% url 'session_enrol' c.id %}" hx-vals='{"enrolled": "1"}' hx-target="closest .panel" hx-swap="outerHTML">Enrol</button>
     {% elif rows.0.status == 'enrolled' %}
-      <button class="button" hx-post="{% url 'class_enrol' c.id %}" hx-vals='{"enrolled": "0"}' hx-target="closest .panel" hx-swap="outerHTML">Cancel enrolment</button>
+      <button class="button" hx-post="{% url 'session_enrol' c.id %}" hx-vals='{"enrolled": "0"}' hx-target="closest .panel" hx-swap="outerHTML">Cancel enrolment</button>
     {% endif %}
   {% endif %}
   {% if message and request.role != 'manager' %}<p class="meta">{{ message }}</p>{% endif %}
@@ -22,7 +22,7 @@
   <h3>Notes</h3>
   {% if editable %}
     <textarea class="notes" name="notes" placeholder="Add notes…"
-              hx-post="{% url 'class_notes' c.id %}" hx-trigger="change" hx-swap="none">{{ c.notes }}</textarea>
+              hx-post="{% url 'session_notes' c.id %}" hx-trigger="change" hx-swap="none">{{ c.notes }}</textarea>
   {% else %}
     <p class="meta">{{ c.notes|default:'No notes.' }}</p>
   {% endif %}
@@ -45,14 +45,14 @@
   </ul>
 
   {% if request.role == 'manager' %}
-    <select class="filter" name="member" hx-post="{% url 'class_add' c.id %}" hx-target="closest .panel" hx-swap="outerHTML">
+    <select class="filter" name="member" hx-post="{% url 'session_add' c.id %}" hx-target="closest .panel" hx-swap="outerHTML">
       <option value="">Add a member…</option>
       {% for member in available %}<option value="{{ member.id }}">{{ member.name }}</option>{% endfor %}
     </select>
 
     <h3>Repeat weekly</h3>
     {% if c.series %}<p class="meta">Part of a weekly series.</p>{% endif %}
-    <form class="repeat" hx-post="{% url 'class_repeat' c.id %}" hx-target="closest .panel" hx-swap="outerHTML">
+    <form class="repeat" hx-post="{% url 'session_repeat' c.id %}" hx-target="closest .panel" hx-swap="outerHTML">
       <label>Until {{ repeat_form.until }}</label>
       <button class="button">Repeat</button>
     </form>
@@ -60,11 +60,11 @@
 
     {# An empty response replaces the panel, which closes it. #}
     <div class="danger-zone">
-      <button class="danger" hx-post="{% url 'class_delete' c.id %}" hx-target="closest .panel" hx-swap="outerHTML"
-              hx-confirm="Delete {{ c.name }}?" @htmx:after-request="selected = null">Delete class</button>
+      <button class="danger" hx-post="{% url 'session_delete' c.id %}" hx-target="closest .panel" hx-swap="outerHTML"
+              hx-confirm="Delete {{ c.name }}?" @htmx:after-request="selected = null">Delete session</button>
       {% if c.series %}
-      <button class="danger" hx-post="{% url 'class_delete' c.id %}" hx-vals='{"following": "1"}' hx-target="closest .panel" hx-swap="outerHTML"
-              hx-confirm="Delete this and all later {{ c.name }} classes?" @htmx:after-request="selected = null">Delete this and following</button>
+      <button class="danger" hx-post="{% url 'session_delete' c.id %}" hx-vals='{"following": "1"}' hx-target="closest .panel" hx-swap="outerHTML"
+              hx-confirm="Delete this and all later {{ c.name }} sessions?" @htmx:after-request="selected = null">Delete this and following</button>
       {% endif %}
     </div>
   {% endif %}

@@ -1,11 +1,11 @@
-{# The Classes heading, with a switch between the calendar and the list. The links #}
+{# The Sessions heading, with a switch between the calendar and the list. The links #}
 {# carry the filters along, from the `filters` Alpine component around the page. #}
 {% with name=request.resolver_match.url_name %}
 <div class="title-row">
-  <h1 class="page-title"><span class="page-icon">📅</span>{% if request.role == 'manager' %}Classes{% else %}My classes{% endif %}</h1>
+  <h1 class="page-title"><span class="page-icon">📅</span>{% if request.role == 'manager' %}Sessions{% else %}My sessions{% endif %}</h1>
   <div class="view-toggle">
     <a href="{% url 'calendar' %}" :href="'{% url 'calendar' %}' + (query && '?' + query)" class="{% if name == 'calendar' %}active{% endif %}">Calendar</a>
-    <a href="{% url 'class_list' %}" :href="'{% url 'class_list' %}' + (query && '?' + query)" class="{% if name == 'class_list' %}active{% endif %}">List</a>
+    <a href="{% url 'session_list' %}" :href="'{% url 'session_list' %}' + (query && '?' + query)" class="{% if name == 'session_list' %}active{% endif %}">List</a>
   </div>
 </div>
 {% endwith %}
@@ -24,12 +24,20 @@
       <option value="">All locations</option>
       {% for location in location_options %}<option value="{{ location }}">{{ location }}</option>{% endfor %}
     </select>
+    <select class="filter" name="category" x-model="category">
+      <option value="">All categories</option>
+      {% for value, label in category_options %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+    </select>
     <select class="filter" name="weapon" x-model="weapon">
       <option value="">All weapons</option>
       {% for value, label in weapon_options %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
     </select>
+    <select class="filter" name="size" x-model="size">
+      <option value="">Group and private</option>
+      {% for value, label in size_options %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+    </select>
     <button type="button" class="button" x-show="active" x-cloak @click="clear()">Clear</button>
   </form>
-  <button class="button primary" hx-get="{% url 'class_new' %}" hx-target="#modal">+ New class</button>
+  <button class="button primary" hx-get="{% url 'session_new' %}" hx-target="#modal">+ New session</button>
 </div>
 {% endif %}

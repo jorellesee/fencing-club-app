@@ -9,7 +9,7 @@ class RoleTests(ClubTestCase):
         self.assertContains(self.client.get('/'), 'Members')
         self.client.force_login(self.alex_user)
         page = self.client.get('/')
-        self.assertContains(page, 'Book a class')
+        self.assertContains(page, 'Book a session')
         self.assertNotContains(page, 'Coaches</a>')
 
     def test_members_and_coaches_cant_open_manager_pages(self):
@@ -87,7 +87,7 @@ class CoachTests(ClubTestCase):
         response = self.client.get(f'/coaches/?coach={self.lim.id}')
         self.assertContains(response, 'Edit coach')
         self.assertContains(response, 'Alex Tan')  # a member they coach
-        self.assertContains(response, 'Junior Foil')  # an upcoming class
+        self.assertContains(response, 'Junior Foil')  # an upcoming session
 
     def test_the_peek_on_its_own(self):
         self.assertContains(self.client.get(f'/coaches/{self.lim.id}/', **HTMX), 'Edit coach')

@@ -1,4 +1,4 @@
-"""Calendar sync: a secret .ics link to someone's classes, which Google Calendar
+"""Calendar sync: a secret .ics link to someone's sessions, which Google Calendar
 (or any calendar app) subscribes to with "From URL"."""
 from django.conf import settings
 from django.http import Http404, HttpResponse
@@ -43,9 +43,9 @@ def calendar_feed(request, token):
     # A switched-off login, or one without a role, gets nothing.
     if not user.is_active or role is None:
         raise Http404
-    name = 'Fencing Club' if role == MANAGER else 'Fencing Club: my classes'
+    name = 'Fencing Club' if role == MANAGER else 'Fencing Club: my sessions'
     host = settings.SITE_HOST or request.get_host()
-    body = ical.calendar(name, queries.feed_classes(user), host)
+    body = ical.calendar(name, queries.feed_sessions(user), host)
     response = HttpResponse(body, content_type='text/calendar; charset=utf-8')
     response['Content-Disposition'] = 'inline; filename="fencing-club.ics"'
     return response

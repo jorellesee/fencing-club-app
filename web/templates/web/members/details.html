@@ -34,17 +34,17 @@
     {% endif %}
   </dl>
 
-  <h3 class="section-title">Class history</h3>
+  <h3 class="section-title">Session history</h3>
   {% if history %}
   <ul class="attendance history">
     {% for row in history %}
     <li>
-      <span class="history-class">{{ row.fencing_class.name }}<span class="muted">{{ row.fencing_class.start|date:"D j M, H:i" }}</span></span>
+      <span class="history-session">{{ row.session.name }}<span class="muted">{{ row.session.start|date:"D j M, H:i" }}</span></span>
       {% status_select row row.editable 'member' %}
     </li>
     {% endfor %}
   </ul>
   {% else %}
-  <p class="empty">Not on any class rosters yet.</p>
+  <p class="empty">Not on any session rosters yet.</p>
   {% endif %}
 </div>

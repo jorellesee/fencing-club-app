@@ -1,5 +1,5 @@
 {% load club %}
-{# A pending lesson request, opened from the calendar. The coach or a manager #}
+{# An unconfirmed lesson, opened from the calendar. The coach or a manager #}
 {# answers it; the member who asked can cancel it. #}
 <aside class="panel" x-init="selected = 'request-{{ lesson.id }}'" @keydown.escape.window="if (!document.querySelector('#modal .modal')) close()">
   <button class="close" @click="close()" aria-label="Close">×</button>
@@ -11,7 +11,7 @@
     <dt>Status</dt><dd>{% lesson_status lesson.status %}</dd>
   </dl>
   <h3>Note</h3>
-  <p class="meta">{{ lesson.note|default:'No note.' }}</p>
+  <p class="meta">{{ lesson.notes|default:'No note.' }}</p>
   {% if error %}<p class="error">{{ error }}</p>{% endif %}
   <div class="row-actions panel-actions">
     {% if request.role == 'member' %}
@@ -21,5 +21,5 @@
       <button class="button primary" hx-post="{% url 'lesson_request_answer' lesson.id 'accept' %}" hx-target="closest .panel" hx-swap="outerHTML">Accept</button>
     {% endif %}
   </div>
-  {% if request.role != 'member' %}<p class="meta">Accepting puts it on the calendar as a one-person class.</p>{% endif %}
+  {% if request.role != 'member' %}<p class="meta">Accepting confirms it, so it can be marked like any other session.</p>{% endif %}
 </aside>

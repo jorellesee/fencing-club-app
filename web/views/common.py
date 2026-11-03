@@ -1,7 +1,7 @@
 """Helpers every page uses: who's allowed in, and htmx's response headers.
 
 htmx response headers:
-- HX-Trigger fires events in the browser, e.g. `classesChanged` makes the calendar
+- HX-Trigger fires events in the browser, e.g. `sessionsChanged` makes the calendar
   reload its events. HX-Trigger-After-Swap fires `closeModal` once a dialog has saved.
 - HX-Retarget and HX-Reswap put the response somewhere other than where the
   request asked, e.g. a saved form's dialog is replaced by the class's panel.

@@ -1,4 +1,4 @@
-"""Classes as an iCalendar (.ics) file, the format Google Calendar subscribes to.
+"""Sessions as an iCalendar (.ics) file, the format Google Calendar subscribes to.
 
 Written by hand rather than with a library, since a feed only needs a few of
 RFC 5545's rules: escape the text, write times in UTC, fold long lines and end
@@ -35,44 +35,48 @@ def utc(moment):
     return moment.astimezone(dt_timezone.utc).strftime('%Y%m%dT%H%M%SZ')
 
 
-def description(fencing_class):
+def description(session):
     lines = []
-    if fencing_class.coach:
-        lines.append(f'Coach: {fencing_class.coach.name}')
-    if fencing_class.weapon:
-        lines.append(f'Weapon: {fencing_class.get_weapon_display()}')
-    if fencing_class.notes:
-        lines += ['', fencing_class.notes]
+    if session.category != session.Category.FENCING:
+        lines.append(session.get_category_display())
+    if session.coach:
+        lines.append(f'Coach: {session.coach.name}')
+    if session.weapon:
+        lines.append(f'Weapon: {session.get_weapon_display()}')
+    if session.notes:
+        lines += ['', session.notes]
     return '\n'.join(lines)
 
 
-def event(fencing_class, host, stamp):
+def event(session, host, stamp):
     lines = [
         'BEGIN:VEVENT',
-        # Stays the same when the class changes, so calendars update it in place.
-        f'UID:class-{fencing_class.pk}@{host}',
+        # Stays the same when the session changes, so calendars update it in place.
+        # Still "class-": sessions kept their ids from when they were classes, and a
+        # new UID would make every calendar delete each event and add it again.
+        f'UID:class-{session.pk}@{host}',
         f'DTSTAMP:{stamp}',
-        f'DTSTART:{utc(fencing_class.start)}',
-        f'DTEND:{utc(fencing_class.end)}',
-        f'SUMMARY:{escape(fencing_class.name)}',
+        f'DTSTART:{utc(session.start)}',
+        f'DTEND:{utc(session.end)}',
+        f'SUMMARY:{escape(session.name)}',
     ]
-    if fencing_class.location:
-        lines.append(f'LOCATION:{escape(fencing_class.location)}')
-    text = description(fencing_class)
+    if session.location:
+        lines.append(f'LOCATION:{escape(session.location)}')
+    text = description(session)
     if text:
         lines.append(f'DESCRIPTION:{escape(text)}')
     lines.append('END:VEVENT')
     return lines
 
 
-def calendar(name, classes, host):
-    """The whole .ics file for `classes`, as text. `host` makes each event's UID
+def calendar(name, sessions, host):
+    """The whole .ics file for `sessions`, as text. `host` makes each event's UID
     unique to this club."""
     stamp = utc(timezone.now())
     lines = [
         'BEGIN:VCALENDAR',
         'VERSION:2.0',
-        'PRODID:-//Fencing Club//Classes//EN',
+        'PRODID:-//Fencing Club//Sessions//EN',
         'CALSCALE:GREGORIAN',
         'METHOD:PUBLISH',
         f'X-WR-CALNAME:{escape(name)}',
@@ -80,7 +84,7 @@ def calendar(name, classes, host):
         'REFRESH-INTERVAL;VALUE=DURATION:PT1H',
         'X-PUBLISHED-TTL:PT1H',
     ]
-    for fencing_class in classes:
-        lines += event(fencing_class, host, stamp)
+    for session in sessions:
+        lines += event(session, host, stamp)
     lines.append('END:VCALENDAR')
     return ''.join(fold(line) + '\r\n' for line in lines)

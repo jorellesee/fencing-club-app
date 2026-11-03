@@ -388,6 +388,7 @@ input {
 .weapon-epee { background: var(--tag-purple-bg); color: var(--tag-purple-text); }
 .weapon-sabre { background: var(--tag-orange-bg); color: var(--tag-orange-text); }
 .weapon-mixed { background: var(--tag-gray-bg); color: var(--tag-gray-text); }
+.category-conditioning { background: var(--tag-green-bg); color: var(--tag-green-text); }
 
 /* Attendance rate */
 
@@ -828,14 +829,14 @@ input[type="date"] {
   overflow-wrap: anywhere;
 }
 
-.history-class {
+.history-session {
   display: flex;
   flex: 1;
   flex-direction: column;
   min-width: 0;
 }
 
-.history-class .muted {
+.history-session .muted {
   font-size: 12px;
 }
 
@@ -849,7 +850,7 @@ input[type="date"] {
   margin: 24px 0 8px;
 }
 
-/* Classes heading, with the Calendar | List switch */
+/* Sessions heading, with the Calendar | List switch */
 .title-row {
   display: flex;
   align-items: center;

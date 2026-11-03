@@ -1,5 +1,7 @@
 """Private lessons: the member's Private lessons page, and the request panel that
-opens from the calendar for the coach, a manager, or the member who asked."""
+opens from the calendar for the coach, a manager, or the member who asked.
+
+A lesson is an individual TrainingSession. A request is one that's unconfirmed."""
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, render
@@ -8,11 +10,11 @@ from django.utils.dateparse import parse_datetime
 from django.views.decorators.http import require_http_methods, require_POST
 
 from club import queries, services
-from club.models import Coach, LessonRequest
+from club.models import Coach
 from club.roles import MEMBER
 
 from ..forms import LessonRequestForm
-from .classes import panel
+from .sessions import panel
 from .common import EVERYONE, htmx, is_htmx, parse_range, role_required, when
 
 
@@ -21,7 +23,7 @@ from .common import EVERYONE, htmx, is_htmx, parse_range, role_required, when
 @role_required(*EVERYONE)
 def request_panel(request, pk, error=''):
     return render(request, 'web/lessons/request_panel.html', {
-        'lesson': get_object_or_404(queries.visible_requests(request.user), pk=pk),
+        'lesson': get_object_or_404(queries.shown_requests(request.user, {}), pk=pk),
         'error': error,
     })
 
@@ -30,7 +32,7 @@ def request_panel(request, pk, error=''):
 @require_POST
 def answer(request, pk, verb):
     """Accept or decline (the coach or a manager), or cancel (the member who asked)."""
-    lesson = get_object_or_404(queries.visible_requests(request.user), pk=pk)
+    lesson = get_object_or_404(queries.shown_requests(request.user, {}), pk=pk)
     allowed = {'cancel'} if request.role == MEMBER else {'accept', 'decline'}
     if verb not in allowed:
         raise PermissionDenied
@@ -43,9 +45,9 @@ def answer(request, pk, verb):
     except ValidationError as error:
         return request_panel(request, pk, error=services.error_text(error))
     if verb == 'accept':
-        # Open the new class, ready to mark.
-        return panel(request, lesson.fencing_class_id, trigger=['classesChanged'])
-    return htmx(HttpResponse(), trigger=['classesChanged'])
+        # Open it as a session now, ready to mark.
+        return panel(request, lesson.pk, trigger=['sessionsChanged'])
+    return htmx(HttpResponse(), trigger=['sessionsChanged'])
 
 
 # The member's Private lessons page
@@ -58,7 +60,7 @@ def lessons(request, message='', error=''):
         coach_options = services.coaches_of(services.own_member(request.user))
     except ValidationError as err:
         coach_options, error = Coach.objects.none(), services.error_text(err)
-    current = queries.visible_requests(request.user).filter(end__gte=timezone.now())
+    current = queries.visible_lessons(request.user).filter(end__gte=timezone.now())
     context = {
         'coach_options': coach_options, 'current': current, 'message': message, 'error': error,
     }
@@ -80,11 +82,11 @@ def lesson_events(request):
         for slot in services.busy_slots(member, coach, start, end)
     ]
     own = {
-        'pending': ('Requested', 'yellow'),
-        'accepted': ('Your lesson', 'green'),
+        'unconfirmed': ('Requested', 'yellow'),
+        'confirmed': ('Your lesson', 'green'),
     }
-    for lesson in LessonRequest.objects.filter(
-        member=member, coach=coach, status__in=own, start__lt=end, end__gt=start
+    for lesson in queries.visible_lessons(request.user).filter(
+        coach=coach, start__lt=end, end__gt=start
     ):
         title, colour = own[lesson.status]
         events.append({
@@ -114,7 +116,7 @@ def request_lesson(request):
         except ValidationError as err:
             error = services.error_text(err)
         else:
-            message = f'Asked {coach.name} for {when(lesson.start)}. It’s pending until they reply.'
+            message = f'Asked {coach.name} for {when(lesson.start)}. It’s unconfirmed until they reply.'
             return htmx(lessons(request, message=message), trigger=['lessonsChanged'],
                         close_modal=True, retarget='#my-lessons', reswap='outerHTML')
     return render(request, 'web/lessons/form.html', {
@@ -125,7 +127,7 @@ def request_lesson(request):
 @role_required(MEMBER)
 @require_POST
 def cancel_lesson(request, pk):
-    lesson = get_object_or_404(queries.visible_requests(request.user), pk=pk)
+    lesson = get_object_or_404(queries.visible_lessons(request.user), pk=pk)
     try:
         services.cancel_lesson(lesson)
     except ValidationError as error:

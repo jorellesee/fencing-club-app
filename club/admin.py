@@ -2,7 +2,8 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 from django.contrib.auth.models import User
 
-from .models import Attendance, Coach, FencingClass, LessonRequest, Member, Profile
+from . import queries
+from .models import Attendance, Coach, Member, Profile, TrainingSession
 from .roles import role_of
 
 @admin.register(Member)
@@ -26,12 +27,29 @@ class AttendanceInline(admin.TabularInline):
     autocomplete_fields = ['member']
 
 
-@admin.register(FencingClass)
-class FencingClassAdmin(admin.ModelAdmin):
+class SizeFilter(admin.SimpleListFilter):
+    """Group or individual, which comes from capacity: 1 makes a private lesson."""
+    title = 'size'
+    parameter_name = 'size'
+
+    def lookups(self, request, model_admin):
+        return queries.SIZES
+
+    def queryset(self, request, queryset):
+        if self.value() == 'individual':
+            return queryset.filter(queries.INDIVIDUAL)
+        if self.value() == 'group':
+            return queryset.exclude(queries.INDIVIDUAL)
+        return queryset
+
+
+@admin.register(TrainingSession)
+class TrainingSessionAdmin(admin.ModelAdmin):
     list_display = [
-        'name', 'start', 'end', 'coach', 'location', 'weapon', 'capacity', 'present_count',
+        'name', 'start', 'end', 'coach', 'location', 'category', 'status', 'weapon',
+        'capacity', 'present_count',
     ]
-    list_filter = ['coach', 'location', 'weapon']
+    list_filter = ['status', SizeFilter, 'category', 'coach', 'location', 'weapon']
     search_fields = ['name', 'coach__name', 'location']
     date_hierarchy = 'start'
     autocomplete_fields = ['coach']
@@ -44,17 +62,10 @@ class FencingClassAdmin(admin.ModelAdmin):
 
 @admin.register(Attendance)
 class AttendanceAdmin(admin.ModelAdmin):
-    list_display = ['member', 'fencing_class', 'status']
+    list_display = ['member', 'session', 'status']
     list_filter = ['status']
     list_editable = ['status']
-    autocomplete_fields = ['member', 'fencing_class']
-
-
-@admin.register(LessonRequest)
-class LessonRequestAdmin(admin.ModelAdmin):
-    list_display = ['member', 'coach', 'start', 'status']
-    list_filter = ['status', 'coach']
-    autocomplete_fields = ['member', 'coach', 'fencing_class']
+    autocomplete_fields = ['member', 'session']
 
 
 class ProfileInline(admin.StackedInline):

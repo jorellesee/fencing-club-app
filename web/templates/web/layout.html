@@ -7,11 +7,11 @@
   <nav class="sidebar">
     <div class="workspace"><span class="workspace-icon">🤺</span>Fencing Club</div>
     {# One item for both views; the page itself switches between them. #}
-    <a href="{% url 'calendar' %}" class="nav-item {% if name == 'calendar' or name == 'class_list' %}active{% endif %}">
-      <span class="nav-icon">📅</span>{% if request.role == 'manager' %}<span class="nav-label">Classes</span>{% else %}<span class="nav-label">My classes</span><span class="nav-short">Classes</span>{% endif %}
+    <a href="{% url 'calendar' %}" class="nav-item {% if name == 'calendar' or name == 'session_list' %}active{% endif %}">
+      <span class="nav-icon">📅</span>{% if request.role == 'manager' %}<span class="nav-label">Sessions</span>{% else %}<span class="nav-label">My sessions</span><span class="nav-short">Sessions</span>{% endif %}
     </a>
     {% if request.role == 'member' %}
-      <a href="{% url 'book' %}" class="nav-item {% if name == 'book' %}active{% endif %}"><span class="nav-icon">➕</span><span class="nav-label">Book a class</span><span class="nav-short">Book</span></a>
+      <a href="{% url 'book' %}" class="nav-item {% if name == 'book' %}active{% endif %}"><span class="nav-icon">➕</span><span class="nav-label">Book a session</span><span class="nav-short">Book</span></a>
       <a href="{% url 'lessons' %}" class="nav-item {% if name == 'lessons' %}active{% endif %}"><span class="nav-icon">🎯</span><span class="nav-label">Private lessons</span><span class="nav-short">Lessons</span></a>
       <a href="{% url 'profile' %}" class="nav-item {% if name == 'profile' %}active{% endif %}"><span class="nav-icon">👤</span><span class="nav-label">My profile</span><span class="nav-short">Profile</span></a>
     {% endif %}

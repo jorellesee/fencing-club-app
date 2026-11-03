@@ -3354,6 +3354,348 @@ After pulling on PythonAnywhere, run `python manage.py migrate` and reload. Then
 
 ---
 
+# Lesson 27: One model for every session (branch `training-sessions`)
+
+**Goal:** merge `FencingClass` and `LessonRequest` into one `TrainingSession` model, with a category (fencing or physical conditioning) and a status (confirmed or unconfirmed). A capacity of 1 makes a session individual (a private lesson). Class becomes Session in the UI and URLs too. Claude built this one.
+
+## What changed
+
+| Where | What |
+| --- | --- |
+| `club/models.py` | `FencingClass` is now `TrainingSession`, with `category` and `status`, and an `is_individual` property (`capacity == 1`). `LessonRequest` is gone. `Attendance.fencing_class` is now `Attendance.session`, and a coach's sessions are `coach.sessions` |
+| `club/migrations/0012_trainingsession.py` (new) | Written by hand: renames the table, adds the fields, moves lesson requests across, then deletes their table. It can be reversed |
+| `club/queries.py` | `sessions()` returns **confirmed** sessions only. `lessons()` and `requests()` are the only ways to get unconfirmed ones. A new `scoped()` holds the "coach's own, member's own, or manager's filters" rule once, for sessions and requests alike |
+| `club/services.py` | A request is created as an unconfirmed individual session with the member on it. Accepting it just sets `status`. Declining or cancelling deletes it. `coach_bookings` is now one query |
+| `web/views/classes.py` → `sessions.py` | Renamed, and so are its views (`session_panel`, `session_form`…). Manager actions look sessions up through `queries.sessions()`, so they can't reach a request |
+| `web/urls.py` | `/classes/…` is now `/sessions/…`, and URL names went from `class_*` to `session_*` |
+| `web/forms.py` | `SessionForm` has category, and capacity's hint says 1 makes it a private lesson |
+| Templates | `classes/` → `sessions/`. "Classes" → "Sessions" everywhere, a Category filter, a "Physical conditioning" tag in the list and on Book a session |
+| `app.js`, `app.css` | `category` added to `FILTERS`, `classesChanged` → `sessionsChanged`, and a green tag for conditioning |
+| Tests | `test_classes.py` → `test_sessions.py`, plus new tests that requests stay out of every session list, decline/cancel delete, conditioning in the form, Generate and the filter. 121 tests |
+
+## Key ideas
+
+### One table, two kinds of row
+
+A private lesson used to live in two places: a `LessonRequest` while it was pending, then a copy made as a `FencingClass` when the coach accepted it. Now it's one row that changes `status`. Accepting goes from "create a class, create its attendance row, link the request to it" to one line:
+
+```python
+lesson.status = TrainingSession.Status.CONFIRMED
+lesson.save(update_fields=['status'])
+```
+
+The member is recorded the same way as on a group session, with an `Attendance` row, so "who is on this session?" has only one answer. `TrainingSession.member` is a small `@property` that reads it for individual sessions.
+
+### The risk: a request showing up where it shouldn't
+
+With requests in the same table, any list of sessions could accidentally include them: on the calendar, on Book a session, in a feed, in the headcounts or in a member's history. The fix is to make the safe choice the default:
+
+- `queries.sessions()` filters `status=CONFIRMED`. Everything else builds on it: `visible_sessions`, `shown_sessions`, `feed_sessions`, `bookable_sessions`
+- `queries.requests()` and `queries.lessons()` are the only places that ask for unconfirmed sessions on purpose
+- `can_edit_session()` returns False for anything unconfirmed, so nobody can mark attendance on a request
+- `test_requests_are_not_sessions_yet` checks every one of these in one test
+
+The rule of thumb is in `queries.py`'s docstring: start from those functions, never from `TrainingSession.objects`.
+
+### Capacity decides individual or group
+
+A first version also had a `type` field (group or individual). It was dropped because it said the same thing as capacity: a group session with room for one person *is* a private lesson. Two fields that must agree will eventually disagree, e.g. an "individual" session with capacity 8. That's a contradiction the app has to pick a side on. With one field, it can't happen.
+
+So "individual" is now derived from capacity rather than stored:
+
+```python
+# club/models.py
+@property
+def is_individual(self):
+    return self.capacity == 1
+
+# club/queries.py: the same rule, for filtering in the database
+INDIVIDUAL = Q(capacity=1)
+...
+return Q(start__gt=timezone.now()) & ~INDIVIDUAL   # bookable: upcoming group sessions
+```
+
+A property works in Python and templates (`{% if c.is_individual %}`), but the database can't filter on it. That's why there's also a `Q` object. The two must stay in sync, so each points at the other in a comment.
+
+**The NULL trap:** blank capacity is stored as NULL ("no limit"). In SQL, `NOT (capacity = 1)` is *unknown*, not true, for NULL, so a hand-written query would quietly drop every unlimited session. Django's `~Q(capacity=1)` knows the column can be NULL and adds `OR capacity IS NULL` for you. `test_capacity_decides_individual_or_group` checks that capacity 1 is hidden from Book a session while 2 and blank are shown.
+
+The trade-off: you can't have a group class capped at one person. For this club that's not a real case.
+
+To filter by it, the Sessions page has a **size** filter (Group / Private lessons) next to category, and the admin has a matching `SizeFilter`. Both reuse `queries.INDIVIDUAL`: `.filter(INDIVIDUAL)` for private lessons and `.exclude(INDIVIDUAL)` for group. A plain `list_filter = ['capacity']` would list every capacity number instead, so the admin needs a small `SimpleListFilter` subclass with `lookups()` (the choices) and `queryset()` (what each one does).
+
+### Renaming a model without losing data
+
+If you rename a model and run `makemigrations`, Django asks *"Did you rename club.FencingClass to club.TrainingSession?"*. Answer yes and it writes `RenameModel`. Answer no and it writes `DeleteModel` + `CreateModel`, which **drops the table and every class in it**. Because this migration did several things at once, it's written by hand:
+
+1. `RenameModel`: the table becomes `club_trainingsession`. Every row keeps its `id`
+2. `AddField` ×2, each with a default, so existing rows become fencing and confirmed
+3. `RenameField` on `Attendance`, with the unique constraint dropped and added again around it
+4. `RunPython(merge_lesson_requests, split_lesson_requests)`: the data move
+5. `DeleteModel('LessonRequest')`, only once its rows have been moved
+
+Inside `RunPython`, use `apps.get_model('club', 'TrainingSession')`, never `from club.models import ...`. The imported model matches today's code, but the migration runs against the database as it was at that step. In step 4, the historical `LessonRequest` still exists even though `models.py` no longer has it.
+
+### A reversible data migration
+
+The second function in `RunPython` runs when you migrate backwards (`python manage.py migrate club 0011`). It turns individual sessions back into lesson requests, so going back doesn't lose anything that was pending. Without it, Django would refuse to go back past this migration. Declined and cancelled requests can't come back, since the forward step drops them.
+
+### Stable calendar IDs
+
+`ical.py` still writes `UID:class-42@host`. Sessions kept the ids they had as classes, and if the UID changed, Google Calendar would see every event as new and delete and re-add the whole calendar. A comment explains why it still says "class".
+
+## Putting it online
+
+The migration changes data, so **back up `db.sqlite3` first**. Then pull, and run `python manage.py migrate` and `collectstatic`, then reload. Old `/classes/42/` bookmarks now give a 404. The calendar at `/` and `/table/` are unchanged.
+
+---
+
+# Lesson 28: Your own server with Coolify on Oracle Cloud
+
+**Goal:** run the app on a server you control, for free, with HTTPS and deploys from GitHub. Oracle Cloud's Always Free tier gives you a real Linux machine. Coolify is a self-hosted dashboard, like your own Render, that builds the app from GitHub and runs it in Docker. You write two small files in the repo, and the rest is setup on Oracle and in Coolify.
+
+## Key ideas
+
+### What's different from PythonAnywhere
+
+| | PythonAnywhere (Lesson 15) | Coolify on Oracle |
+| --- | --- | --- |
+| What you get | A slot on someone else's server | A whole virtual machine (up to 4 ARM cores, 24 GB RAM) |
+| How the app runs | PythonAnywhere's server imports your WSGI file | gunicorn inside a Docker container that Coolify builds |
+| Database | SQLite in your home folder | SQLite in a Docker **volume**, which survives rebuilds |
+| Environment variables | WSGI file and `postactivate` | Coolify's Environment Variables tab |
+| Deploying | `git pull` in a console, then **Reload** | Push to GitHub, Coolify rebuilds (or click **Deploy**) |
+| Outbound internet | Allowlist only | Open (except port 25), so SMTP on 587 works |
+| You look after | Nothing | Ubuntu updates, the firewall, backups |
+
+### Containers are thrown away
+
+Each deploy, Coolify builds a fresh **image** from your `Dockerfile` and starts a new **container** from it. Anything the old container wrote to its own files is gone, which is what happened to SQLite on Render without a disk. A **volume** is a folder that lives outside the container and is mounted into each new one. You mount one at `/data` and point `SQLITE_PATH` at `/data/db.sqlite3`. The setting already reads it ([config/settings.py](config/settings.py)).
+
+### Build time vs run time
+
+The `Dockerfile` runs in two phases:
+- **Build** (`RUN` lines): install requirements and run `collectstatic`. The result is baked into the image. No secrets are needed, and the volume isn't mounted yet.
+- **Run** (`CMD`): every time the container starts, run `migrate` (now the volume *is* mounted), then start gunicorn.
+
+`collectstatic` with `DJANGO_DEBUG=false` insists on a secret key, because `settings.py` crashes without one. A throwaway key on the `RUN` line is fine: collecting files signs nothing. The real key only exists at run time, in Coolify.
+
+### Who handles HTTPS
+
+Coolify runs a proxy (Traefik) on ports 80 and 443. It gets a free Let's Encrypt certificate for your domain, decrypts the traffic, and passes plain HTTP to gunicorn on port 8000 with an `X-Forwarded-Proto: https` header. That header is what `SECURE_PROXY_SSL_HEADER` in `settings.py` trusts, the same as on Render.
+
+### Two firewalls on Oracle
+
+Oracle blocks traffic twice: once in the cloud network (the **Security List**) and again inside Ubuntu (`iptables`). A port has to be open in both. This is the step most people get stuck on.
+
+## Step 1: a Dockerfile
+
+Create `Dockerfile` in the project folder, next to `manage.py`:
+
+```dockerfile
+FROM python:3.12-slim
+
+# Print logs straight away, and don't litter the image with .pyc files.
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+
+WORKDIR /app
+
+# Requirements first: Docker caches this layer, so a code-only change skips pip.
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+# Hashed static files for WhiteNoise. The key is a placeholder: the real one is set at run time.
+RUN DJANGO_DEBUG=false DJANGO_SECRET_KEY=build-only python manage.py collectstatic --noinput
+
+EXPOSE 8000
+
+# The volume is mounted by now, so migrate the real database, then serve.
+CMD ["sh", "-c", "python manage.py migrate --noinput && gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 2 --access-logfile -"]
+```
+
+Why copy `requirements.txt` on its own before the rest? Docker rebuilds from the first line whose inputs changed. Most deploys only change code, so the slow `pip install` layer is reused.
+
+## Step 2: a .dockerignore
+
+`COPY . .` copies everything, including your local database and your venv. Create `.dockerignore`:
+
+```
+.git
+.venv
+.claude
+.gstack
+__pycache__
+*.pyc
+db.sqlite3
+staticfiles
+.DS_Store
+.env
+```
+
+Leaving out `db.sqlite3` matters most. Otherwise your Mac's data would be baked into every image.
+
+## Step 3: try it on your Mac (optional)
+
+If you have Docker Desktop:
+
+```bash
+docker build -t fencing .
+docker run --rm -p 8000:8000 -v fencing-data:/data \
+  -e DJANGO_DEBUG=false -e DJANGO_SECRET_KEY=test -e SQLITE_PATH=/data/db.sqlite3 \
+  fencing
+```
+
+Open http://localhost:8000. Stop it with Ctrl+C, run it again, and the data is still there, because it lives in the `fencing-data` volume. (With debug off, cookies are marked secure. Chrome and Firefox still accept them on `localhost`, but Safari may not, so log in with one of those. Online it's HTTPS, so this doesn't come up.)
+
+Then run the tests, commit, and push. Coolify deploys from GitHub, so it only sees what you've pushed:
+
+```bash
+python manage.py test
+git add -A && git commit -m "Dockerfile for Coolify" && git push
+```
+
+Deploy from `main` once this branch is merged, or pick this branch in Step 8.
+
+## Step 4: an Oracle Cloud server
+
+1. Sign up at [cloud.oracle.com](https://cloud.oracle.com). It asks for a card but doesn't charge for Always Free resources. Pick a **home region** carefully: Always Free machines can only be made there, and you can't change it later. Singapore is the obvious choice.
+2. **Compute → Instances → Create instance**:
+    - **Image:** Canonical Ubuntu 24.04.
+    - **Shape:** Ampere → `VM.Standard.A1.Flex`, 2 OCPUs and 12 GB RAM (the free tier allows up to 4 and 24 in total). It's an ARM machine. That's fine, because Coolify builds the image on the server itself.
+    - **Networking:** create a new VCN with a public subnet, and assign a public IPv4 address.
+    - **SSH keys:** **Generate a key pair** and download the private key.
+    - **Boot volume:** the default (about 47 GB) is enough. Coolify wants 30 GB or more.
+3. If it says **Out of capacity**, try another availability domain, or try again later. Upgrading the account to **Pay As You Go** usually fixes it, and Always Free resources stay free.
+4. Copy the instance's **Public IP** and log in from your Mac:
+
+    ```bash
+    mv ~/Downloads/ssh-key-*.key ~/.ssh/oracle.key && chmod 600 ~/.ssh/oracle.key
+    ssh -i ~/.ssh/oracle.key ubuntu@<public-ip>
+    ```
+
+    `chmod 600` matters: ssh refuses a key file that other users could read.
+
+## Step 5: open the ports (both firewalls)
+
+| Port | For |
+| --- | --- |
+| 22 | SSH (already open) |
+| 80, 443 | The website, and Let's Encrypt |
+| 8000 | The Coolify dashboard |
+| 6001, 6002 | Coolify's live updates and in-browser terminal |
+
+**In Oracle:** Instance → the subnet → its **Security List** → **Add Ingress Rules**: source `0.0.0.0/0`, TCP, destination ports `80,443,8000,6001,6002`.
+
+**In Ubuntu**, over ssh:
+
+```bash
+for port in 80 443 8000 6001 6002; do
+  sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport $port -j ACCEPT
+done
+sudo netfilter-persistent save
+```
+
+Oracle's Ubuntu image ends its `INPUT` rules with a REJECT-everything line. `-I INPUT 6` inserts your rule before it. Look with `sudo iptables -L INPUT --line-numbers`. `netfilter-persistent save` keeps the rules after a reboot.
+
+## Step 6: install Coolify
+
+Still over ssh:
+
+```bash
+sudo apt update && sudo apt upgrade -y
+curl -fsSL https://cdn.coollabs.io/coolify/install.sh | sudo bash
+```
+
+It installs Docker and Coolify, and takes a few minutes. A script piped into `sudo bash` can do anything to the machine, so only do this with sources you trust. This one is Coolify's official installer.
+
+**Then straight away** open `http://<public-ip>:8000` and create your admin account. The first person to visit that page becomes the admin, so don't leave it open to strangers. Choose **This Machine** (localhost) as the server when it asks: the app runs on the same box as Coolify.
+
+## Step 7: a domain
+
+Coolify offers a free address like `http://<random>.<public-ip>.sslip.io`. sslip.io is a DNS service that turns any name containing an IP into that IP. It's fine for trying things out. For the club, a real domain is better: at your registrar, add an **A record** (for example `fencing.yourdomain.com`) pointing at the public IP.
+
+## Step 8: the app in Coolify
+
+1. **Projects → + Add → New resource**:
+    - Public repo: **Public Repository**, then paste `https://github.com/jorellesee/fencing-club-app`.
+    - Private repo: **Private Repository (with GitHub App)**. Coolify walks you through making a GitHub App, which lets it read just that repo and get told about pushes.
+2. Pick the branch. Set **Build Pack** to **Dockerfile**, and **Ports Exposes** to `8000`.
+3. **Domains:** `https://fencing.yourdomain.com` (or the sslip.io one with `http` changed to `https`). The `https://` is what tells Coolify to get a certificate.
+4. **Environment Variables:**
+
+    ```
+    DJANGO_DEBUG=false
+    DJANGO_SECRET_KEY=<a fresh key, see below>
+    SITE_HOST=fencing.yourdomain.com
+    SQLITE_PATH=/data/db.sqlite3
+    EMAIL_HOST=smtp.gmail.com
+    EMAIL_HOST_USER=<your gmail>
+    EMAIL_HOST_PASSWORD=<a gmail app password>
+    DEFAULT_FROM_EMAIL=Fencing Club <your gmail>
+    ```
+
+    Make the key on your Mac with `python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"`. `SITE_HOST` is the bare host, with no `https://`. `settings.py` adds it to `ALLOWED_HOSTS` and `CSRF_TRUSTED_ORIGINS`, and builds invite links from it.
+5. **Persistent Storage → + Add → Volume Mount:** destination path `/data`.
+6. Click **Deploy** and watch the build log. When it's green, open your domain.
+7. Make the first manager in the app's terminal (the **Terminal** tab in Coolify, or `docker exec -it <container> sh` over ssh):
+
+    ```bash
+    python manage.py createsuperuser
+    ```
+
+Turn on **Auto Deploy** (on by default with the GitHub App, or add a webhook) and every push to that branch redeploys.
+
+## Step 9: bring your existing data across (optional)
+
+Download `db.sqlite3` from PythonAnywhere's Files tab, then:
+
+```bash
+scp -i ~/.ssh/oracle.key db.sqlite3 ubuntu@<public-ip>:~
+ssh -i ~/.ssh/oracle.key ubuntu@<public-ip>
+docker ps                                   # find the app's container name
+sudo docker cp ~/db.sqlite3 <container>:/data/db.sqlite3
+```
+
+Then click **Restart** in Coolify. The `CMD` runs `migrate` on startup, which applies migration `0012` (Lesson 27) to the old data.
+
+## Step 10: backups
+
+Nobody backs up the volume for you. Find where it lives on the server with `sudo docker volume ls` and `sudo docker volume inspect <name>` (look at `Mountpoint`). Then add a nightly copy with `sudo crontab -e`:
+
+```
+0 3 * * * sqlite3 /var/lib/docker/volumes/<name>/_data/db.sqlite3 ".backup /home/ubuntu/backups/db-$(date +\%F).sqlite3"
+```
+
+(Install `sqlite3` with `sudo apt install sqlite3` and make the folder with `mkdir ~/backups` first.) `.backup` makes a consistent copy even while the app is writing, which a plain `cp` doesn't promise. `%` has to be written `\%` in a crontab. Now and then, `scp` a backup back to your Mac, because a backup on the same machine doesn't help if the machine goes.
+
+## Things to know
+
+- **Idle machines get reclaimed.** Oracle may stop Always Free instances that sit nearly idle for a week. A Pay As You Go account isn't affected.
+- **Updates are yours.** Run `sudo apt update && sudo apt upgrade` now and then. Coolify updates itself from its dashboard.
+- **Once the dashboard has its own HTTPS domain** (Settings → Instance's domain), you can close port 8000 again in both firewalls.
+- **Logs:** the app's **Logs** tab in Coolify shows gunicorn's output, including errors. That's why the `CMD` passes `--access-logfile -` and the image sets `PYTHONUNBUFFERED=1`.
+
+## Troubleshooting
+
+| Symptom | Likely cause |
+| --- | --- |
+| `http://<ip>:8000` times out | A port closed in one of the two firewalls (Step 5) |
+| Certificate errors, or the site only loads over HTTP | DNS not pointing at the IP yet, or port 80 closed, so Let's Encrypt can't check |
+| `Bad Request (400)` | `SITE_HOST` doesn't match the domain exactly |
+| `CSRF verification failed` on login | Same: `CSRF_TRUSTED_ORIGINS` comes from `SITE_HOST` |
+| Data gone after a deploy | No volume at `/data`, or `SQLITE_PATH` not set |
+| Build fails at `collectstatic` | A template points at a static file that doesn't exist. Run the same command locally to see which |
+| `KeyError: 'DJANGO_SECRET_KEY'` | The variable isn't set in Coolify |
+
+## Try it
+
+1. Change some text in a template, push, and watch Coolify redeploy. Then check that your sessions are still there.
+2. Run `sudo docker ps` on the server. Why is there a new container after each deploy, and why does your data survive?
+3. Delete the `.dockerignore` line `db.sqlite3`, rebuild locally with `docker build`, and run `docker run --rm fencing ls -la /app`. What's in there that shouldn't be? Then put the line back.
+
+---
+
 # Check your understanding: questions and answers
 
 <details>
@@ -3505,6 +3847,18 @@ After pulling on PythonAnywhere, run `python manage.py migrate` and reload. Then
 3. **Why does the reset page say the same thing for unknown emails?** Otherwise anyone could type in emails to find out who has a login at the club.
 4. **Why count login attempts per username, not per IP address?** Behind PythonAnywhere's proxy, every visitor can look like the same address, so a per-address limit would lock everyone out at once.
 5. **Why switch a login off instead of deleting it?** It can be switched back on, and the person keeps the same profile and email.
+
+</details>
+
+<details>
+<summary><b>Lesson 27</b></summary>
+
+1. **Why does `queries.sessions()` filter to confirmed sessions instead of each page doing it?** So that leaving requests out is the default. A page that forgets a filter shows less, not a request that looks booked.
+2. **What would happen if you answered "no" when `makemigrations` asked whether FencingClass was renamed?** Django would delete the old table and create a new, empty one, losing every class and its attendance.
+3. **Why does `RunPython` use `apps.get_model()` rather than importing the model?** The migration has to see the models as they were at that step. `LessonRequest` no longer exists in `models.py`, but it still exists at that point in the migration.
+4. **Why is a pending lesson's member stored as an `Attendance` row rather than a `member` field?** It's how every session records who's on it, so rosters, busy times and "my sessions" all work the same way for lessons and group sessions.
+5. **Why is "individual" worked out from capacity instead of stored in its own field?** A separate field could contradict capacity (an "individual" session with room for 8). Deriving it means there's only one fact to keep right.
+6. **Why does `queries.py` need `Q(capacity=1)` when the model already has `is_individual`?** A property runs in Python on one object. Filtering a list happens in SQL, which can only use real columns.
 
 </details>
 

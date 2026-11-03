@@ -1,18 +1,15 @@
 from django import template
 from django.utils.html import format_html
 
-from club.models import FencingClass, LessonRequest
+from club.models import TrainingSession
 
 register = template.Library()
 
-WEAPONS = dict(FencingClass.Weapon.choices)
+WEAPONS = dict(TrainingSession.Weapon.choices)
 ATTENDANCE = ['enrolled', 'present', 'absent', 'excused']
 LOGIN_LABELS = {'invited': 'Invited', 'active': 'Active', 'deactivated': 'Switched off'}
 LOGIN_CLASSES = {'invited': 'status-excused', 'active': 'status-present', 'deactivated': 'status-enrolled'}
-LESSON_CLASSES = {
-    'pending': 'status-excused', 'accepted': 'status-present',
-    'declined': 'status-absent', 'cancelled': 'status-enrolled',
-}
+LESSON_CLASSES = {'unconfirmed': 'status-excused', 'confirmed': 'status-present'}
 
 
 @register.simple_tag
@@ -20,6 +17,15 @@ def weapon_tag(weapon):
     if not weapon:
         return ''
     return format_html('<span class="tag weapon-{}">{}</span>', weapon, WEAPONS[weapon])
+
+
+@register.simple_tag
+def category_tag(category):
+    """Only for what isn't fencing, which is most sessions and goes without saying."""
+    if not category or category == TrainingSession.Category.FENCING:
+        return ''
+    label = TrainingSession.Category(category).label
+    return format_html('<span class="tag category-{}">{}</span>', category, label)
 
 
 @register.simple_tag
@@ -36,15 +42,15 @@ def login_tag(status):
 
 @register.simple_tag
 def lesson_status(status):
-    label = LessonRequest.Status(status).label
+    label = TrainingSession.Status(status).label
     return format_html('<span class="tag {}">{}</span>', LESSON_CLASSES[status], label)
 
 
 @register.filter
-def headcount(fencing_class):
+def headcount(session):
     """Present out of capacity, or out of the roster if there's no capacity."""
-    total = fencing_class.capacity or fencing_class.member_count
-    return f'{fencing_class.present_count}/{total}'
+    total = session.capacity or session.member_count
+    return f'{session.present_count}/{total}'
 
 
 @register.inclusion_tag('web/partials/rate_bar.html')

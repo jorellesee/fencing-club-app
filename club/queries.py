@@ -1,29 +1,53 @@
 """What each person can see. Every page asks here rather than filtering on its own,
 so a page can't show something these rules hide.
 
-`user` is the logged-in user. Managers see everything, coaches the club's classes
+`user` is the logged-in user. Managers see everything, coaches the club's sessions
 (their calendar shows only their own), and members only what's theirs.
+
+Lesson requests are unconfirmed sessions in the same table, so `sessions()` leaves
+them out and only `requests()` and `lessons()` include them. Start from those
+rather than TrainingSession.objects, or a request could show up as if booked.
 """
 from datetime import timedelta
 
 from django.db.models import Count, Max, Min, Q
 from django.utils import timezone
 
-from .models import Attendance, Coach, FencingClass, LessonRequest, Member
+from .models import Attendance, Coach, Member, TrainingSession
 from .roles import COACH, MANAGER, MEMBER, role_of
 
-# The filters a manager can set on the Classes page.
-FILTERS = ['coach', 'member', 'location', 'weapon']
+# The filters a manager can set on the Sessions page.
+FILTERS = ['coach', 'member', 'location', 'category', 'weapon', 'size']
+# The size filter's choices: by capacity, since 1 makes a session individual.
+SIZES = [('group', 'Group'), ('individual', 'Private lessons')]
+
+CONFIRMED = TrainingSession.Status.CONFIRMED
+UNCONFIRMED = TrainingSession.Status.UNCONFIRMED
+# A session for one person, i.e. a private lesson. See TrainingSession.is_individual.
+INDIVIDUAL = Q(capacity=1)
 
 
-def classes():
-    """Classes with their headcounts: `member_count` and `present_count`, earliest
-    first. The order_by is needed: Django leaves out the model's default ordering
-    when a query counts things."""
-    return FencingClass.objects.select_related('coach').annotate(
+def sessions():
+    """Confirmed sessions with their headcounts: `member_count` and `present_count`,
+    earliest first. The order_by is needed: Django leaves out the model's default
+    ordering when a query counts things."""
+    return TrainingSession.objects.filter(status=CONFIRMED).select_related('coach').annotate(
         member_count=Count('attendance'),
         present_count=Count('attendance', filter=Q(attendance__status='present')),
     ).order_by('start')
+
+
+def lessons():
+    """Individual sessions, confirmed or not, with who they're for."""
+    return (
+        TrainingSession.objects.filter(INDIVIDUAL, coach__isnull=False)
+        .select_related('coach').prefetch_related('attendance__member').order_by('start')
+    )
+
+
+def requests():
+    """Lessons waiting for their coach to confirm them."""
+    return lessons().filter(status=UNCONFIRMED)
 
 
 def members():
@@ -32,24 +56,25 @@ def members():
     return Member.objects.annotate(
         present_count=Count('attendance', filter=Q(attendance__status='present')),
         marked_count=Count('attendance', filter=Q(attendance__status__in=['present', 'absent'])),
-        last_present=Max(
-            'attendance__fencing_class__start', filter=Q(attendance__status='present')
-        ),
+        last_present=Max('attendance__session__start', filter=Q(attendance__status='present')),
     ).select_related('profile__user', 'primary_coach').order_by('name')
 
 
 def coaches():
-    """Coaches with how many classes they have and when the next one is."""
+    """Coaches with how many sessions they have and when the next one is."""
+    confirmed = Q(sessions__status=CONFIRMED)
     return Coach.objects.annotate(
-        class_count=Count('classes'),
-        next_class=Min('classes__start', filter=Q(classes__start__gte=timezone.now())),
+        session_count=Count('sessions', filter=confirmed),
+        next_session=Min(
+            'sessions__start', filter=confirmed & Q(sessions__start__gte=timezone.now())
+        ),
     ).select_related('profile__user').order_by('name')
 
 
 def locations():
-    """Every location used so far, once each, for the filter and the class form."""
+    """Every location used so far, once each, for the filter and the session form."""
     return (
-        FencingClass.objects.exclude(location='')
+        TrainingSession.objects.exclude(location='')
         .order_by('location')
         .values_list('location', flat=True)
         .distinct()
@@ -61,97 +86,90 @@ def own_coach_id(user):
     return user.profile.coach_id or 0
 
 
-def on_class(**lookup):
-    """Classes with a matching attendance row, e.g. on_class(member=3). A subquery
-    rather than a join, so the headcounts stay whole-class."""
-    return Q(id__in=Attendance.objects.filter(**lookup).values('fencing_class'))
+def on_session(**lookup):
+    """Sessions with a matching attendance row, e.g. on_session(member=3). A subquery
+    rather than a join, so the headcounts stay whole-session."""
+    return Q(id__in=Attendance.objects.filter(**lookup).values('session'))
 
 
 def mine(user):
-    """The classes a member login is on."""
-    return on_class(member__profile__user=user)
+    """The sessions a member login is on."""
+    return on_session(member__profile__user=user)
 
 
 def bookable():
-    """Upcoming classes. Private lessons are never open to other members."""
-    return Q(start__gt=timezone.now(), lesson_request__isnull=True)
+    """Upcoming group sessions. Private lessons are never open to other members."""
+    return Q(start__gt=timezone.now()) & ~INDIVIDUAL
 
 
-def visible_classes(user):
-    """Classes this person may open: any for managers and coaches, and for members
+def visible_sessions(user):
+    """Sessions this person may open: any for managers and coaches, and for members
     their own or ones they could book."""
     if role_of(user) == MEMBER:
-        return classes().filter(mine(user) | bookable())
-    return classes()
+        return sessions().filter(mine(user) | bookable())
+    return sessions()
 
 
-def bookable_classes(user):
-    """Upcoming classes a member isn't on yet."""
-    return classes().filter(bookable()).exclude(mine(user))
+def bookable_sessions(user):
+    """Upcoming group sessions a member isn't on yet."""
+    return sessions().filter(bookable()).exclude(mine(user))
 
 
-def shown_classes(user, filters):
-    """What the calendar and the list show: a manager's filtered classes, a coach's
-    own, a member's own."""
+def scoped(queryset, user, filters):
+    """A coach's own, a member's own, or for a manager, everything matching the
+    filters."""
     role = role_of(user)
-    queryset = classes()
     if role == COACH:
         return queryset.filter(coach=own_coach_id(user))
     if role == MEMBER:
         return queryset.filter(mine(user))
-    if filters.get('coach'):
-        queryset = queryset.filter(coach=filters['coach'])
     if filters.get('member'):
-        queryset = queryset.filter(on_class(member=filters['member']))
-    if filters.get('location'):
-        queryset = queryset.filter(location=filters['location'])
-    if filters.get('weapon'):
-        queryset = queryset.filter(weapon=filters['weapon'])
+        queryset = queryset.filter(on_session(member=filters['member']))
+    for field in ['coach', 'location', 'category', 'weapon']:
+        if filters.get(field):
+            queryset = queryset.filter(**{field: filters[field]})
+    if filters.get('size') == 'individual':
+        queryset = queryset.filter(INDIVIDUAL)
+    elif filters.get('size') == 'group':
+        queryset = queryset.exclude(INDIVIDUAL)
     return queryset
 
 
-def feed_classes(user):
+def shown_sessions(user, filters):
+    """What the calendar and the list show: a manager's filtered sessions, a coach's
+    own, a member's own."""
+    return scoped(sessions(), user, filters)
+
+
+def shown_requests(user, filters):
+    """Requests for the calendar, beside the sessions from shown_sessions()."""
+    return scoped(requests(), user, filters)
+
+
+def visible_lessons(user):
+    """Lessons and requests: all for managers, a coach's own, a member's own."""
+    return scoped(lessons(), user, {})
+
+
+def feed_sessions(user):
     """What someone's calendar feed shows: what their calendar does, with no
     filters, from two months ago onwards."""
     since = timezone.now() - timedelta(days=60)
-    return shown_classes(user, {}).filter(start__gte=since)
+    return shown_sessions(user, {}).filter(start__gte=since)
 
 
-def can_edit_class(user, fencing_class):
-    """Managers edit anything, coaches only their own classes' notes and attendance."""
+def can_edit_session(user, session):
+    """Managers edit any confirmed session, coaches only their own sessions' notes
+    and attendance. Nobody marks a lesson that hasn't been confirmed."""
+    if session.status != CONFIRMED:
+        return False
     role = role_of(user)
     if role == MANAGER:
         return True
     return (
-        role == COACH and fencing_class.coach_id is not None
-        and fencing_class.coach_id == user.profile.coach_id
+        role == COACH and session.coach_id is not None
+        and session.coach_id == user.profile.coach_id
     )
-
-
-def visible_requests(user):
-    """Lesson requests: all for managers, a coach's own, a member's own."""
-    queryset = LessonRequest.objects.select_related('member', 'coach')
-    role = role_of(user)
-    if role == COACH:
-        return queryset.filter(coach=own_coach_id(user))
-    if role == MEMBER:
-        return queryset.filter(member__profile__user=user)
-    return queryset
-
-
-def shown_requests(user, filters):
-    """Pending requests for the calendar, beside the classes from shown_classes()."""
-    queryset = visible_requests(user).filter(status=LessonRequest.Status.PENDING)
-    if role_of(user) != MANAGER:
-        return queryset
-    # Requests have no location or weapon, so those filters hide them.
-    if filters.get('location') or filters.get('weapon'):
-        return queryset.none()
-    if filters.get('coach'):
-        queryset = queryset.filter(coach=filters['coach'])
-    if filters.get('member'):
-        queryset = queryset.filter(member=filters['member'])
-    return queryset
 
 
 def visible_members(user):
@@ -162,5 +180,8 @@ def visible_members(user):
 
 
 def history(member):
-    """A member's classes, newest first."""
-    return member.attendance.select_related('fencing_class').order_by('-fencing_class__start')
+    """A member's confirmed sessions, newest first."""
+    return (
+        member.attendance.filter(session__status=CONFIRMED)
+        .select_related('session').order_by('-session__start')
+    )

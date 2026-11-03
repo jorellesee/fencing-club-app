@@ -6,9 +6,9 @@
   <button class="button" hx-get="{% url 'coach_edit' coach.id %}" hx-target="#modal">Edit coach</button>
 
   <dl class="properties">
-    <dt>Classes</dt><dd>{{ coach.class_count }}</dd>
-    <dt>Next class</dt>
-    <dd>{% if coach.next_class %}{{ coach.next_class|date:"D j M, H:i" }}{% else %}<span class="muted">None booked</span>{% endif %}</dd>
+    <dt>Sessions</dt><dd>{{ coach.session_count }}</dd>
+    <dt>Next session</dt>
+    <dd>{% if coach.next_session %}{{ coach.next_session|date:"D j M, H:i" }}{% else %}<span class="muted">None booked</span>{% endif %}</dd>
     <dt>Weapon</dt>
     <dd>{% if coach.weapon %}{% weapon_tag coach.weapon %}{% else %}<span class="muted">Empty</span>{% endif %}</dd>
     <dt>Email</dt><dd>{{ coach.email|default:'<span class="muted">Empty</span>' }}</dd>
@@ -33,6 +33,6 @@
   <p class="empty">No members have {{ coach.name }} as their primary coach.</p>
   {% endif %}
 
-  {% include 'web/coaches/classes.html' with title='Upcoming classes' rows=upcoming empty='No upcoming classes.' %}
-  {% include 'web/coaches/classes.html' with title='Recent classes' rows=past empty='No past classes.' %}
+  {% include 'web/coaches/sessions.html' with title='Upcoming sessions' rows=upcoming empty='No upcoming sessions.' %}
+  {% include 'web/coaches/sessions.html' with title='Recent sessions' rows=past empty='No past sessions.' %}
 </div>
