@@ -13,6 +13,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 import atexit
 import logging
 import os
+import sys
 from pathlib import Path
 
 from django.core.exceptions import ImproperlyConfigured
@@ -33,8 +34,11 @@ POSTHOG_PROJECT_TOKEN = os.environ.get('POSTHOG_PROJECT_TOKEN')
 POSTHOG_HOST = os.environ.get('POSTHOG_HOST')
 POSTHOG_MW_CLIENT = None
 
-if not POSTHOG_PROJECT_TOKEN or not POSTHOG_HOST:
-    if DEBUG:
+# Tests never send events, so they run without a .env (in CI, say) and don't pollute PostHog.
+TESTING = len(sys.argv) > 1 and sys.argv[1] == 'test'
+
+if TESTING or not POSTHOG_PROJECT_TOKEN or not POSTHOG_HOST:
+    if DEBUG and not TESTING:
         missing_variable = (
             'POSTHOG_PROJECT_TOKEN'
             if not POSTHOG_PROJECT_TOKEN
